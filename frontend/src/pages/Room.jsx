@@ -148,7 +148,9 @@ export default function Room({ socket, playerName }) {
 
   // Auto-scroll chat
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   }, [chatMessages, chatTab]);
 
   // Live KaTeX preview for answer and steps
@@ -220,7 +222,10 @@ export default function Room({ socket, playerName }) {
   };
 
   const handleReplaceProblem = (idx) => {
-    if (confirm(`确定要换掉第 ${idx + 1} 题吗？该题的得分将被重置。`)) {
+    const hasVoted = room.replaceVotes?.[idx]?.[me.team];
+    if (hasVoted) return; // already voted
+
+    if (confirm(`确定要提议换掉第 ${idx + 1} 题吗？需对方同意，更换后该题的得分将被重置。`)) {
       socket.emit('replaceProblem', { roomId: id, probIndex: idx });
     }
   };
@@ -277,6 +282,32 @@ export default function Room({ socket, playerName }) {
 
           {room.status === 'waiting' && (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2rem' }}>
+
+              {/* Room Config Info */}
+              <div style={{
+                background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.15)',
+                padding: '1.25rem', borderRadius: '12px', width: '80%', maxWidth: '600px',
+                textAlign: 'left'
+              }}>
+                <h4 style={{ margin: '0 0 1rem 0', color: 'var(--accent-blue)', fontSize: '1.05rem', borderBottom: '1px solid rgba(59, 130, 246, 0.1)', paddingBottom: '0.5rem' }}>房间配置信息</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  <div><strong style={{ color: 'var(--text-primary)' }}>题目数量：</strong> {room.config.numQuestions} 题</div>
+                  <div><strong style={{ color: 'var(--text-primary)' }}>难度范围：</strong> {room.config.minDifficulty} - {room.config.maxDifficulty}</div>
+                  <div><strong style={{ color: 'var(--text-primary)' }}>AI 模型：</strong> {room.config.aiConfig ? room.config.aiConfig.modelName : '默认 (Gemini)'}</div>
+                  <div>
+                    <strong style={{ color: 'var(--text-primary)' }}>包含标签：</strong>
+                    {room.config.includeTags?.length > 0 ? room.config.includeTags.join(', ') : '无'}
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>排除标签：</strong>
+                    {room.config.excludeTags?.length > 0 ? room.config.excludeTags.join(', ') : '无'}
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>分数分配：</strong>  {room.config.points.join(', ')} 分
+                  </div>
+                </div>
+              </div>
+
               <h3 style={{ fontWeight: 600 }}>选择你的队伍并准备</h3>
               <div style={{ display: 'flex', gap: '1.5rem', width: '100%', justifyContent: 'center' }}>
                 <div style={{
@@ -373,21 +404,40 @@ export default function Room({ socket, playerName }) {
                           color: 'var(--text-secondary)', padding: '0.2rem 0.6rem', borderRadius: '6px'
                         }}>{t}</span>
                       ))}
-                      {/* Replace button */}
+                      {/* Replace button section */}
                       {room.status === 'playing' && !isProbLockedByUs(activeProb) && !isProbLockedByOther(activeProb) && (
-                        <button
-                          onClick={() => handleReplaceProblem(activeProb)}
-                          style={{
-                            marginLeft: 'auto', fontSize: '0.75rem', padding: '0.2rem 0.5rem',
-                            background: 'transparent', border: '1px solid rgba(239,68,68,0.3)',
-                            color: '#ef4444', borderRadius: '6px', cursor: 'pointer',
-                            transition: 'all 0.2s'
-                          }}
-                          onMouseEnter={(e) => { e.target.style.background = 'rgba(239,68,68,0.08)'; }}
-                          onMouseLeave={(e) => { e.target.style.background = 'transparent'; }}
-                        >
-                          🔄 换题
-                        </button>
+                        (() => {
+                          const hasRequested = room.replaceVotes?.[activeProb]?.[me.team];
+                          const otherTeamRequested = room.replaceVotes?.[activeProb]?.[me.team === 'A' ? 'B' : 'A'];
+
+                          if (hasRequested) {
+                            return (
+                              <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#f59e0b', fontWeight: 600 }}>
+                                ⏳ 已请求换题，等对方同意...
+                              </span>
+                            );
+                          }
+
+                          return (
+                            <button
+                              onClick={() => handleReplaceProblem(activeProb)}
+                              style={{
+                                marginLeft: 'auto', fontSize: '0.75rem', padding: '0.3rem 0.6rem',
+                                background: otherTeamRequested ? '#ef4444' : 'transparent',
+                                border: '1px solid rgba(239,68,68,0.4)',
+                                color: otherTeamRequested ? '#fff' : '#ef4444',
+                                borderRadius: '6px', cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                fontWeight: otherTeamRequested ? 600 : 400,
+                                animation: otherTeamRequested ? 'pulse 2s infinite' : 'none'
+                              }}
+                              onMouseEnter={(e) => { if (!otherTeamRequested) e.target.style.background = 'rgba(239,68,68,0.08)'; }}
+                              onMouseLeave={(e) => { if (!otherTeamRequested) e.target.style.background = 'transparent'; }}
+                            >
+                              {otherTeamRequested ? '同意对方换题请求' : '🔄 请求换题'}
+                            </button>
+                          );
+                        })()
                       )}
                     </div>
 
@@ -466,7 +516,7 @@ export default function Room({ socket, playerName }) {
         </div>
 
         {/* Chat Panel */}
-        <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '500px', minWidth: '260px', maxWidth: '320px' }}>
+        <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', minHeight: '500px', minWidth: '260px', maxWidth: '320px' }}>
           <div style={{ display: 'flex', gap: '0', marginBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)' }}>
             <button onClick={() => setChatTab('all')}
               style={{
@@ -503,13 +553,13 @@ export default function Room({ socket, playerName }) {
                 <span style={{ fontWeight: 600, fontSize: '0.78rem', color: msg.team === 'A' ? teamAColor : teamBColor }}>
                   {msg.senderName}
                 </span>
-                <span style={{ color: 'var(--text-primary)', marginLeft: '0.4rem' }}>{msg.message}</span>
+                <span style={{ color: 'var(--text-primary)', marginLeft: '0.4rem', wordBreak: 'break-word' }}>{msg.message}</span>
               </div>
             ))}
             <div ref={chatEndRef} />
           </div>
 
-          <form onSubmit={sendChat} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+          <form onSubmit={sendChat} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
             <input type="text" className="input-field"
               placeholder={chatTab === 'all' ? '发送给所有人...' : '发送给队友...'}
               value={chatInput} onChange={(e) => setChatInput(e.target.value)}

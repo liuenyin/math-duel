@@ -39,11 +39,18 @@ io.on('connection', (socket) => {
         players: [],
         teamScores: { A: 0, B: 0 },
         status: 'waiting',
-        problems: [],
+        problems: [], // generated ones
+        preGenerating: false, // flag to indicate async generation in progress
         state: { scoresTracker: { A: {}, B: {} }, locks: {} },
         skipVotes: { A: false, B: false },
+        replaceVotes: {}, // { probIndex: { A: false, B: false } }
         chatHistory: []
       };
+
+      // PRE-GENERATE problems immediately upon room creation
+      if (config) {
+        preGenerateProblems(roomId);
+      }
     }
 
     let player = rooms[roomId].players.find(p => p.id === socket.id);
@@ -143,34 +150,70 @@ io.on('connection', (socket) => {
   socket.on('replaceProblem', async ({ roomId, probIndex }) => {
     const room = rooms[roomId];
     if (!room || room.status !== 'playing') return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player) return;
+    const team = player.team;
+
     // Only allow if problem is not locked
     if (room.state.locks[probIndex]) {
       socket.emit('globalError', { message: '该题已被锁定，无法更换。' });
       return;
     }
 
-    io.to(roomId).emit('problemReplacing', { probIndex });
+    // Initialize replace vote state for this problem if not exists
+    if (!room.replaceVotes[probIndex]) {
+      room.replaceVotes[probIndex] = { A: false, B: false };
+    }
 
-    try {
-      const aiConfig = room.config.aiConfig || null;
-      const existingProblems = room.problems.filter((_, i) => i !== probIndex);
-      const newProb = await generateSingleProblem(room.config, aiConfig, existingProblems);
+    room.replaceVotes[probIndex][team] = true;
+    io.to(roomId).emit('roomUpdate', room);
 
-      room.problems[probIndex] = newProb;
-      // Reset scores for this problem
-      room.state.scoresTracker.A[probIndex] = 0;
-      room.state.scoresTracker.B[probIndex] = 0;
-      delete room.state.locks[probIndex];
-      // Recalculate team scores
-      room.teamScores.A = Object.values(room.state.scoresTracker.A).reduce((a, b) => a + b, 0);
-      room.teamScores.B = Object.values(room.state.scoresTracker.B).reduce((a, b) => a + b, 0);
+    const otherTeam = team === 'A' ? 'B' : 'A';
 
-      const masked = { problem: newProb.problem, tags: newProb.tags, difficulty: newProb.difficulty };
-      io.to(roomId).emit('problemReplaced', { probIndex, problem: masked });
-      io.to(roomId).emit('roomUpdate', room);
-    } catch (e) {
-      console.error('[replaceProblem] error:', e.message);
-      io.to(roomId).emit('globalError', { message: '更换题目失败，请重试。' });
+    // Check if both teams agreed
+    if (room.replaceVotes[probIndex].A && room.replaceVotes[probIndex].B) {
+      // Both agreed, reset vote and proceed
+      room.replaceVotes[probIndex] = { A: false, B: false };
+      io.to(roomId).emit('problemReplacing', { probIndex });
+
+      const msg = {
+        senderId: 'system', senderName: '系统', team: 'system',
+        message: `双队同意，正在重新生成第 ${probIndex + 1} 题...`, chatType: 'all', timestamp: Date.now()
+      };
+      room.chatHistory.push(msg);
+      io.to(roomId).emit('chatMessage', msg);
+
+      try {
+        const aiConfig = room.config.aiConfig || null;
+        const existingProblems = room.problems.filter((_, i) => i !== probIndex);
+        const newProb = await generateSingleProblem(room.config, aiConfig, existingProblems);
+
+        room.problems[probIndex] = newProb;
+        // Reset scores for this problem
+        room.state.scoresTracker.A[probIndex] = 0;
+        room.state.scoresTracker.B[probIndex] = 0;
+        delete room.state.locks[probIndex];
+        // Recalculate team scores
+        room.teamScores.A = Object.values(room.state.scoresTracker.A).reduce((a, b) => a + b, 0);
+        room.teamScores.B = Object.values(room.state.scoresTracker.B).reduce((a, b) => a + b, 0);
+
+        const masked = { problem: newProb.problem, tags: newProb.tags, difficulty: newProb.difficulty };
+        io.to(roomId).emit('problemReplaced', { probIndex, problem: masked });
+        io.to(roomId).emit('roomUpdate', room);
+      } catch (e) {
+        console.error('[replaceProblem] error:', e.message);
+        io.to(roomId).emit('globalError', { message: '更换题目失败，请重试。' });
+      }
+    } else {
+      // Notify the other team
+      const msg = {
+        senderId: 'system', senderName: '系统', team: 'system',
+        message: `${team}队请求更换第 ${probIndex + 1} 题，请${otherTeam}队确认。`, chatType: 'all', timestamp: Date.now()
+      };
+      room.chatHistory.push(msg);
+      if (room.chatHistory.length > 200) room.chatHistory.shift();
+      io.to(roomId).emit('chatMessage', msg);
     }
   });
 
@@ -247,42 +290,64 @@ io.on('connection', (socket) => {
   });
 });
 
-async function startGame(roomId) {
+// Pre-generate problems backwards in async
+async function preGenerateProblems(roomId) {
   const room = rooms[roomId];
-  const numQ = room.config.numQuestions || 3;
-  room.status = 'playing';
-  room.skipVotes = { A: false, B: false };
-  room.problems = [];
-  room.state.scoresTracker = { A: {}, B: {} };
-  room.state.locks = {};
-  room.teamScores = { A: 0, B: 0 };
-  room.players.forEach(p => p.score = 0);
-  io.to(roomId).emit('paperGenerated', { paper: [], total: numQ }); // clear frontend
-  io.to(roomId).emit('roomUpdate', room);
+  if (!room || room.preGenerating) return;
+  room.preGenerating = true;
 
+  const numQ = room.config.numQuestions || 3;
   const aiConfig = room.config.aiConfig || null;
 
-  // Generate problems one by one
+  room.problems = [];
+
   for (let i = 0; i < numQ; i++) {
     try {
       const prob = await generateSingleProblem(room.config, aiConfig, room.problems);
       room.problems.push(prob);
-      const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
-      io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
-      console.log(`[Game] Room ${roomId}: problem ${i + 1}/${numQ} generated`);
+      console.log(`[Game] Room ${roomId}: Pre-generated problem ${i + 1}/${numQ}`);
     } catch (error) {
-      console.error(`Failed to generate problem ${i + 1}:`, error);
-      // Push fallback
+      console.error(`Failed to pre-generate problem ${i + 1}:`, error);
       const fallback = {
         problem: `求 $x$，已知 $3^x = ${Math.pow(3, i + 2)}$。`,
         answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
         tags: ['对数与指数'], difficulty: 1000
       };
       room.problems.push(fallback);
-      const masked = { problem: fallback.problem, tags: fallback.tags, difficulty: fallback.difficulty };
+    }
+  }
+  room.preGenerating = false;
+  if (room.status === 'playing') {
+    // If the game started before generation finished, flush them to clients
+    for (let i = 0; i < room.problems.length; i++) {
+      const prob = room.problems[i];
+      const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
       io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
     }
   }
+}
+
+async function startGame(roomId) {
+  const room = rooms[roomId];
+  const numQ = room.config.numQuestions || 3;
+  room.status = 'playing';
+  room.skipVotes = { A: false, B: false };
+  room.replaceVotes = {};
+  room.state.scoresTracker = { A: {}, B: {} };
+  room.state.locks = {};
+  room.teamScores = { A: 0, B: 0 };
+  room.players.forEach(p => p.score = 0);
+  io.to(roomId).emit('paperGenerated', { paper: [], total: numQ });
+  io.to(roomId).emit('roomUpdate', room);
+
+  // If already generated, just emit them all now
+  if (!room.preGenerating && room.problems.length === numQ) {
+    room.problems.forEach((prob, i) => {
+      const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
+      io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
+    });
+  }
+  // If preGenerating is still true, the preGenerateProblems function will emit them as they finish or when it ends
 }
 
 const PORT = process.env.PORT || 3001;
