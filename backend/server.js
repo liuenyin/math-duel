@@ -316,36 +316,43 @@ io.on('connection', (socket) => {
   });
 });
 
-// Pre-generate problems in one batch API call
+// Pre-generate problems concurrently (all fire at once, each emits as it resolves)
 async function preGenerateProblems(roomId) {
   const room = rooms[roomId];
   if (!room || room.preGenerating) return;
   room.preGenerating = true;
 
   const numQ = room.config.numQuestions || 3;
+  room.problems = new Array(numQ).fill(null);
 
-  try {
-    console.log(`[Game] Room ${roomId}: Generating ${numQ} problems in batch...`);
-    const problems = await generateBatchProblems(room.config);
-    room.problems = problems.slice(0, numQ);
-    console.log(`[Game] Room ${roomId}: Batch generation complete! Got ${room.problems.length} problems.`);
-  } catch (error) {
-    console.error(`[Game] Room ${roomId}: Batch generation failed:`, error);
-    room.problems = Array.from({ length: numQ }, (_, i) => ({
-      problem: `求 $x$，已知 $3^x = ${Math.pow(3, i + 2)}$。`,
-      answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
-      tags: ['对数与指数'], difficulty: 1000
-    }));
-  }
+  console.log(`[Game] Room ${roomId}: Generating ${numQ} problems concurrently...`);
 
+  // Fire all requests at once
+  const promises = Array.from({ length: numQ }, (_, i) => {
+    // Each problem generates independently, existing=[] since they're parallel
+    return generateSingleProblem(room.config, null, [])
+      .catch(error => {
+        console.error(`[Game] Room ${roomId}: Problem ${i + 1} failed:`, error.message);
+        return {
+          problem: `求 $x$，已知 $3^x = ${Math.pow(3, i + 2)}$。`,
+          answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
+          tags: ['对数与指数'], difficulty: 1000
+        };
+      })
+      .then(prob => {
+        // Store and emit immediately when this one resolves
+        room.problems[i] = prob;
+        console.log(`[Game] Room ${roomId}: Problem ${i + 1}/${numQ} ready!`);
+        if (room.status === 'playing') {
+          const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
+          io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
+        }
+      });
+  });
+
+  await Promise.all(promises);
   room.preGenerating = false;
-  if (room.status === 'playing') {
-    for (let i = 0; i < room.problems.length; i++) {
-      const prob = room.problems[i];
-      const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
-      io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
-    }
-  }
+  console.log(`[Game] Room ${roomId}: All ${numQ} problems ready.`);
 }
 
 async function startGame(roomId) {
