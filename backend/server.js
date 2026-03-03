@@ -213,9 +213,8 @@ io.on('connection', (socket) => {
       io.to(roomId).emit('chatMessage', msg);
 
       try {
-        const aiConfig = room.config.aiConfig || null;
         const existingProblems = room.problems.filter((_, i) => i !== probIndex);
-        const newProb = await generateSingleProblem(room.config, aiConfig, existingProblems);
+        const newProb = await generateSingleProblem(room.config, null, existingProblems);
 
         room.problems[probIndex] = newProb;
         // Reset scores for this problem
@@ -262,8 +261,7 @@ io.on('connection', (socket) => {
     }
 
     socket.emit('judgingPending', { probIndex });
-    const aiConfig = room.config.aiConfig || null;
-    const aiResult = await judgeAnswerSteps(probData.answer, probData.solution, answer, steps, aiConfig);
+    const aiResult = await judgeAnswerSteps(probData.answer, probData.solution, answer, steps);
     const scoreVal = (aiResult.scorePercent / 100) * maxPts;
 
     const currentTeamScoreOnProb = room.state.scoresTracker[team][probIndex] || 0;
@@ -325,11 +323,10 @@ async function preGenerateProblems(roomId) {
   room.preGenerating = true;
 
   const numQ = room.config.numQuestions || 3;
-  const aiConfig = room.config.aiConfig || null;
 
   try {
     console.log(`[Game] Room ${roomId}: Generating ${numQ} problems in batch...`);
-    const problems = await generateBatchProblems(room.config, aiConfig);
+    const problems = await generateBatchProblems(room.config);
     room.problems = problems.slice(0, numQ);
     console.log(`[Game] Room ${roomId}: Batch generation complete! Got ${room.problems.length} problems.`);
   } catch (error) {

@@ -1,35 +1,50 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-const defaultApiKey = process.env.GEMINI_API_KEY || "";
-const defaultBaseUrl = process.env.GEMINI_BASE_URL || "https://api.apimart.ai/v1";
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-3.1-pro-preview-thinking-apimart";
+// ===== DeepSeek API Configuration =====
+const DEEPSEEK_API_KEY = "sk-3d68364cb8fb4e7ba5962940796343a2";
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+const GEN_MODEL = "deepseek-chat";       // Fast model for problem generation
+const JUDGE_MODEL = "deepseek-reasoner"; // Reasoning model for accurate judging
 
 // ===== Unified OpenAI-compatible API call =====
-// Works with: apimart, DeepSeek, OpenAI, 通义千问, 智谱, and any OpenAI-compatible endpoint
-async function callChatCompletion(apiKey, baseUrl, modelName, prompt, systemPrompt) {
-    const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+async function callChatCompletion(modelName, prompt, systemPrompt) {
+    const url = `${DEEPSEEK_BASE_URL}/chat/completions`;
+    const isReasoner = modelName.includes('reasoner');
+
+    // deepseek-reasoner does not support temperature or system role
+    const messages = isReasoner
+        ? [{ role: 'user', content: prompt }]
+        : [
+            { role: 'system', content: systemPrompt || '你是一位数学竞赛出题与批改专家。' },
+            { role: 'user', content: prompt }
+        ];
 
     const body = {
         model: modelName,
-        messages: [
-            { role: 'system', content: systemPrompt || '你是一位数学竞赛出题与批改专家。' },
-            { role: 'user', content: prompt }
-        ],
-        temperature: 0.5,
+        messages,
         stream: false,
     };
+    if (!isReasoner) {
+        body.temperature = 0.5;
+    }
 
     console.log(`[AI] Calling ${modelName} at ${url}`);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000); // 120s timeout
 
     const res = await fetch(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
+            'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
     });
+
+    clearTimeout(timeout);
 
     if (!res.ok) {
         const errText = await res.text();
@@ -39,68 +54,35 @@ async function callChatCompletion(apiKey, baseUrl, modelName, prompt, systemProm
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content || '';
 
-    // Parse JSON from the response (handle ```json ... ``` wrapping)
+    // Parse JSON from the response
     let cleaned = text.trim();
-    // Remove markdown code block wrappers if present
-    if (cleaned.startsWith('```')) {
-        cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?\s*```$/i, '').trim();
+    // Remove markdown code block wrappers
+    cleaned = cleaned.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+
+    // Find first { or [ and last } or ]
+    const startObj = cleaned.indexOf('{');
+    const startArr = cleaned.indexOf('[');
+    let start = -1;
+    if (startObj !== -1 && startArr !== -1) start = Math.min(startObj, startArr);
+    else if (startObj !== -1) start = startObj;
+    else if (startArr !== -1) start = startArr;
+
+    const endObj = cleaned.lastIndexOf('}');
+    const endArr = cleaned.lastIndexOf(']');
+    let end = -1;
+    if (endObj !== -1 && endArr !== -1) end = Math.max(endObj, endArr);
+    else if (endObj !== -1) end = endObj;
+    else if (endArr !== -1) end = endArr;
+
+    if (start !== -1 && end !== -1 && end > start) {
+        cleaned = cleaned.substring(start, end + 1);
     }
 
     return JSON.parse(cleaned);
 }
 
-// ===== Generate a SINGLE problem =====
-export async function generateSingleProblem(config, aiConfig, existingProblems) {
-    const { minDifficulty, maxDifficulty, includeTags, excludeTags } = config;
-
-    const includeStr = includeTags && includeTags.length > 0
-        ? `题目应涵盖以下标签/知识点之一：${includeTags.join('、')}。` : '';
-    const excludeStr = excludeTags && excludeTags.length > 0
-        ? `严格禁止出现以下知识点：${excludeTags.join('、')}。` : '';
-
-    // Avoid duplicates
-    const existingDesc = existingProblems && existingProblems.length > 0
-        ? `\n以下题目已经存在，请确保新题目不重复：\n${existingProblems.map((p, i) => `${i + 1}. ${p.problem?.substring(0, 60)}`).join('\n')}` : '';
-
-    const prompt = `请生成恰好 1 道数学题目。
-难度范围（Codeforces 等效）：${minDifficulty || 1200} 到 ${maxDifficulty || 1900}。
-${includeStr}
-${excludeStr}
-${existingDesc}
-
-所有内容中文，公式用 LaTeX（$...$  行内，$$...$$ 行间）。
-
-返回一个 JSON 对象（不是数组）：
-{"problem":"题干", "answer":"答案", "solution":"解法", "tags":["标签"], "difficulty":1500}
-不要包含额外文字。`;
-
-    try {
-        const apiKey = aiConfig?.apiKey || defaultApiKey;
-        const baseUrl = aiConfig?.baseUrl || defaultBaseUrl;
-        const modelName = aiConfig?.modelName || DEFAULT_MODEL;
-        if (!apiKey) throw new Error("No API key configured");
-
-        const result = await callChatCompletion(apiKey, baseUrl, modelName, prompt,
-            '你是数学竞赛出题专家。返回单个 JSON 对象，不要数组，不要代码块。');
-
-        // Handle if AI returns array anyway
-        if (Array.isArray(result)) return result[0];
-        return result;
-    } catch (e) {
-        console.error("[AI] Error generating single problem:", e.message);
-        const r = Math.floor(Math.random() * 5) + 3;
-        return {
-            problem: `求 $x$ 的值，已知 $${r}^x = ${Math.pow(r, 2)}$。这道该死的题目只会在调不出来AI时出现。`,
-            answer: `2`,
-            solution: `因为 $${r}^x = ${r}^{2}$，所以 $x = 2$。`,
-            tags: ["对数与指数"],
-            difficulty: 1000
-        };
-    }
-}
-
-// ===== Generate a BATCH of problems (all at once in one API call) =====
-export async function generateBatchProblems(config, aiConfig) {
+// ===== Generate a BATCH of problems (one API call, uses deepseek-chat) =====
+export async function generateBatchProblems(config) {
     const { numQuestions, minDifficulty, maxDifficulty, includeTags, excludeTags } = config;
     const count = numQuestions || 3;
 
@@ -121,12 +103,7 @@ ${excludeStr}
 不要包含额外文字。`;
 
     try {
-        const apiKey = aiConfig?.apiKey || defaultApiKey;
-        const baseUrl = aiConfig?.baseUrl || defaultBaseUrl;
-        const modelName = aiConfig?.modelName || DEFAULT_MODEL;
-        if (!apiKey) throw new Error("No API key configured");
-
-        const result = await callChatCompletion(apiKey, baseUrl, modelName, prompt,
+        const result = await callChatCompletion(GEN_MODEL, prompt,
             '你是数学竞赛出题专家。返回 JSON 数组，不要代码块。');
 
         if (Array.isArray(result)) return result;
@@ -136,7 +113,7 @@ ${excludeStr}
         return Array.from({ length: count }, (_, i) => {
             const r = Math.floor(Math.random() * 5) + 3;
             return {
-                problem: `求 $x$ 的值，已知 $${r}^x = ${Math.pow(r, i + 2)}$。这道题目只会在调不出来AI时出现。`,
+                problem: `求 $x$ 的值，已知 $${r}^x = ${Math.pow(r, i + 2)}$。（AI 暂时不可用）`,
                 answer: `${i + 2}`,
                 solution: `因为 $${r}^x = ${r}^{${i + 2}}$，所以 $x = ${i + 2}$。`,
                 tags: ["对数与指数"],
@@ -146,8 +123,50 @@ ${excludeStr}
     }
 }
 
-// ===== Judge Answer =====
-export async function judgeAnswerSteps(expectedAnswer, solution, userAnswer, userSteps, aiConfig) {
+// ===== Generate a SINGLE problem (for replaceProblem, uses deepseek-chat) =====
+export async function generateSingleProblem(config, _aiConfig, existingProblems) {
+    const { minDifficulty, maxDifficulty, includeTags, excludeTags } = config;
+
+    const includeStr = includeTags && includeTags.length > 0
+        ? `题目应涵盖以下标签/知识点之一：${includeTags.join('、')}。` : '';
+    const excludeStr = excludeTags && excludeTags.length > 0
+        ? `严格禁止出现以下知识点：${excludeTags.join('、')}。` : '';
+
+    const existingDesc = existingProblems && existingProblems.length > 0
+        ? `\n以下题目已经存在，请确保新题目不重复：\n${existingProblems.map((p, i) => `${i + 1}. ${p.problem?.substring(0, 60)}`).join('\n')}` : '';
+
+    const prompt = `请生成恰好 1 道数学题目。
+难度范围（Codeforces 等效）：${minDifficulty || 1200} 到 ${maxDifficulty || 1900}。
+${includeStr}
+${excludeStr}
+${existingDesc}
+
+所有内容中文，公式用 LaTeX（$...$  行内，$$...$$ 行间）。
+
+返回一个 JSON 对象（不是数组）：
+{"problem":"题干", "answer":"答案", "solution":"解法", "tags":["标签"], "difficulty":1500}
+不要包含额外文字。`;
+
+    try {
+        const result = await callChatCompletion(GEN_MODEL, prompt,
+            '你是数学竞赛出题专家。返回单个 JSON 对象，不要数组，不要代码块。');
+        if (Array.isArray(result)) return result[0];
+        return result;
+    } catch (e) {
+        console.error("[AI] Error generating single problem:", e.message);
+        const r = Math.floor(Math.random() * 5) + 3;
+        return {
+            problem: `求 $x$ 的值，已知 $${r}^x = ${Math.pow(r, 2)}$。（AI 暂时不可用）`,
+            answer: `2`,
+            solution: `因为 $${r}^x = ${r}^{2}$，所以 $x = 2$。`,
+            tags: ["对数与指数"],
+            difficulty: 1000
+        };
+    }
+}
+
+// ===== Judge Answer (uses deepseek-reasoner for accuracy) =====
+export async function judgeAnswerSteps(expectedAnswer, solution, userAnswer, userSteps) {
     const prompt = `请批改以下学生答题：
 
 标准答案：${expectedAnswer}
@@ -173,14 +192,7 @@ export async function judgeAnswerSteps(expectedAnswer, solution, userAnswer, use
 不要包含任何额外文字。`;
 
     try {
-        const apiKey = aiConfig?.apiKey || defaultApiKey;
-        const baseUrl = aiConfig?.baseUrl || defaultBaseUrl;
-        const modelName = aiConfig?.modelName || DEFAULT_MODEL;
-
-        if (!apiKey) throw new Error("No API key configured");
-
-        const result = await callChatCompletion(apiKey, baseUrl, modelName, prompt,
-            '你是自动数学阅卷老师。请严格按照要求返回 JSON 对象，不要添加额外文字。');
+        const result = await callChatCompletion(JUDGE_MODEL, prompt);
 
         return {
             scorePercent: result.scorePercent ?? 0,
