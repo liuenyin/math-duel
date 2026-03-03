@@ -9,6 +9,7 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
+app.get('/', (req, res) => res.send('Math Duel API running ✅'));
 
 const server = createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
