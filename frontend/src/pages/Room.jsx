@@ -26,6 +26,8 @@ export default function Room({ socket, playerName }) {
   const [chatTab, setChatTab] = useState('all');
   const chatEndRef = useRef(null);
   const problemRef = useRef(null);
+  const answerPreviewRef = useRef(null);
+  const stepsPreviewRef = useRef(null);
 
   useEffect(() => {
     if (!playerName) { navigate('/'); return; }
@@ -148,6 +150,30 @@ export default function Room({ socket, playerName }) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, chatTab]);
+
+  // Live KaTeX preview for answer and steps
+  useEffect(() => {
+    const renderPreview = (ref, text) => {
+      if (!ref.current || !text.trim()) {
+        if (ref.current) ref.current.innerHTML = '<span style="color:var(--text-secondary);font-style:italic;font-size:0.8rem">输入含 $...$ 的 LaTeX 公式即可预览</span>';
+        return;
+      }
+      ref.current.textContent = text;
+      try {
+        renderMathInElement(ref.current, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '\\(', right: '\\)', display: false }
+          ],
+          throwOnError: false
+        });
+      } catch (e) { /* keep raw text */ }
+    };
+    renderPreview(answerPreviewRef, answer);
+    renderPreview(stepsPreviewRef, steps);
+  }, [answer, steps]);
 
   if (!room) {
     return (
@@ -389,11 +415,21 @@ export default function Room({ socket, playerName }) {
                           <>
                             <div>
                               <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem', display: 'block' }}>最终答案</label>
-                              <input type="text" className="input-field" placeholder="例如：5, x=2" value={answer} onChange={(e) => setAnswer(e.target.value)} disabled={judging} />
+                              <input type="text" className="input-field" placeholder="例如：5, $x=\sqrt{2}$" value={answer} onChange={(e) => setAnswer(e.target.value)} disabled={judging} />
+                              <div ref={answerPreviewRef} style={{
+                                marginTop: '0.3rem', padding: '0.4rem 0.6rem', fontSize: '0.9rem',
+                                background: 'rgba(59, 130, 246, 0.04)', border: '1px dashed rgba(59, 130, 246, 0.15)',
+                                borderRadius: '6px', minHeight: '1.6rem', lineHeight: 1.6
+                              }} />
                             </div>
                             <div>
                               <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem', display: 'block' }}>解题过程（推导过程占80%分值！）</label>
-                              <textarea className="input-field" placeholder="描述你的解题思路、推导过程等，过程分占总分的80%！" rows={3} value={steps} onChange={(e) => setSteps(e.target.value)} disabled={judging} />
+                              <textarea className="input-field" placeholder="描述你的解题步骤，支持 $LaTeX$ 公式" rows={3} value={steps} onChange={(e) => setSteps(e.target.value)} disabled={judging} />
+                              <div ref={stepsPreviewRef} style={{
+                                marginTop: '0.3rem', padding: '0.5rem 0.6rem', fontSize: '0.9rem',
+                                background: 'rgba(59, 130, 246, 0.04)', border: '1px dashed rgba(59, 130, 246, 0.15)',
+                                borderRadius: '6px', minHeight: '1.6rem', lineHeight: 1.8, whiteSpace: 'pre-wrap'
+                              }} />
                             </div>
                             <div style={{ display: 'flex', gap: '0.75rem' }}>
                               <button type="submit" className="btn" disabled={(!answer.trim() && !steps.trim()) || judging} style={{ flex: 1 }}>
