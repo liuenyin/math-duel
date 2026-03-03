@@ -24,6 +24,7 @@ async function callChatCompletion(modelName, prompt, systemPrompt) {
         model: modelName,
         messages,
         stream: false,
+        max_tokens: 8192,
     };
     if (!isReasoner) {
         body.temperature = 0.5;
@@ -109,10 +110,11 @@ ${includeStr}
 ${excludeStr}
 
 所有内容中文，公式用 LaTeX（$...$ 行内，$$...$$ 行间）。
+解法要求简洁，每题解法不超过3行。
 
 返回一个 JSON 数组，每个元素格式为：
-{"problem":"题干", "answer":"答案", "solution":"详细解法", "tags":["标签"], "difficulty":数字}
-不要包含额外文字。`;
+{"problem":"题干", "answer":"最终答案（简短）", "solution":"简洁解法(不超过3行)", "tags":["标签"], "difficulty":数字}
+只输出JSON，不要任何额外文字。`;
 
     try {
         const result = await callChatCompletion(GEN_MODEL, prompt,
