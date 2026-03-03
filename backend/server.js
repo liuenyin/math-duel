@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import { generateSingleProblem, judgeAnswerSteps } from './ai.js';
+import { generateSingleProblem, generateBatchProblems, judgeAnswerSteps } from './ai.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -318,7 +318,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Pre-generate problems backwards in async
+// Pre-generate problems in one batch API call
 async function preGenerateProblems(roomId) {
   const room = rooms[roomId];
   if (!room || room.preGenerating) return;
@@ -327,26 +327,22 @@ async function preGenerateProblems(roomId) {
   const numQ = room.config.numQuestions || 3;
   const aiConfig = room.config.aiConfig || null;
 
-  room.problems = [];
-
-  for (let i = 0; i < numQ; i++) {
-    try {
-      const prob = await generateSingleProblem(room.config, aiConfig, room.problems);
-      room.problems.push(prob);
-      console.log(`[Game] Room ${roomId}: Pre-generated problem ${i + 1}/${numQ}`);
-    } catch (error) {
-      console.error(`Failed to pre-generate problem ${i + 1}:`, error);
-      const fallback = {
-        problem: `求 $x$，已知 $3^x = ${Math.pow(3, i + 2)}$。`,
-        answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
-        tags: ['对数与指数'], difficulty: 1000
-      };
-      room.problems.push(fallback);
-    }
+  try {
+    console.log(`[Game] Room ${roomId}: Generating ${numQ} problems in batch...`);
+    const problems = await generateBatchProblems(room.config, aiConfig);
+    room.problems = problems.slice(0, numQ);
+    console.log(`[Game] Room ${roomId}: Batch generation complete! Got ${room.problems.length} problems.`);
+  } catch (error) {
+    console.error(`[Game] Room ${roomId}: Batch generation failed:`, error);
+    room.problems = Array.from({ length: numQ }, (_, i) => ({
+      problem: `求 $x$，已知 $3^x = ${Math.pow(3, i + 2)}$。`,
+      answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
+      tags: ['对数与指数'], difficulty: 1000
+    }));
   }
+
   room.preGenerating = false;
   if (room.status === 'playing') {
-    // If the game started before generation finished, flush them to clients
     for (let i = 0; i < room.problems.length; i++) {
       const prob = room.problems[i];
       const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };

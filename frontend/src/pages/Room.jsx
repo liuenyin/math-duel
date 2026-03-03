@@ -511,6 +511,7 @@ export default function Room({ socket, playerName }) {
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
               <div className="loading-spinner"></div>
               <h3 className="animate-pulse" style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>AI 正在出题...</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', opacity: 0.7 }}>这大概需要 1-3 分钟，请耐心等待</p>
             </div>
           )}
         </div>
