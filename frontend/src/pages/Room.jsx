@@ -293,7 +293,7 @@ export default function Room({ socket, playerName }) {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                   <div><strong style={{ color: 'var(--text-primary)' }}>题目数量：</strong> {room.config.numQuestions} 题</div>
                   <div><strong style={{ color: 'var(--text-primary)' }}>难度范围：</strong> {room.config.minDifficulty} - {room.config.maxDifficulty}</div>
-                  <div><strong style={{ color: 'var(--text-primary)' }}>AI 模型：</strong> {room.config.aiConfig ? room.config.aiConfig.modelName : '默认 (Gemini)'}</div>
+                  <div><strong style={{ color: 'var(--text-primary)' }}>AI 模型：</strong> DeepSeek（出题 Chat / 判卷 Reasoner）</div>
                   <div>
                     <strong style={{ color: 'var(--text-primary)' }}>包含标签：</strong>
                     {room.config.includeTags?.length > 0 ? room.config.includeTags.join(', ') : '无'}

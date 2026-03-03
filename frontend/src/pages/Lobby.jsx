@@ -40,12 +40,7 @@ const DIFFICULTY_MARKERS = [
 ];
 
 const AI_PRESETS = [
-  { name: '默认（Gemini）', provider: 'gemini', baseUrl: '', modelName: '', description: '使用服务器默认配置' },
-  { name: 'DeepSeek', provider: 'openai', baseUrl: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat', description: '国产大模型' },
-  { name: 'OpenAI', provider: 'openai', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o', description: 'GPT-4o' },
-  { name: '通义千问', provider: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', modelName: 'qwen-plus', description: '阿里云' },
-  { name: '智谱 GLM', provider: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelName: 'glm-4-plus', description: '智谱AI' },
-  { name: '自定义', provider: 'openai', baseUrl: '', modelName: '', description: '手动输入' },
+  { name: 'DeepSeek', description: '出题 Chat / 判卷 Reasoner' },
 ];
 
 export default function Lobby({ playerName, setPlayerName }) {
@@ -60,11 +55,7 @@ export default function Lobby({ playerName, setPlayerName }) {
   const [includeTags, setIncludeTags] = useState([]);
   const [excludeTags, setExcludeTags] = useState([]);
 
-  // AI Model Config
-  const [aiPreset, setAiPreset] = useState(0); // index into AI_PRESETS
-  const [aiApiKey, setAiApiKey] = useState('');
-  const [aiBaseUrl, setAiBaseUrl] = useState('');
-  const [aiModelName, setAiModelName] = useState('');
+
 
   const toggleTag = (tag, list, setList, otherList, setOtherList) => {
     if (list.includes(tag)) {
@@ -77,14 +68,7 @@ export default function Lobby({ playerName, setPlayerName }) {
     }
   };
 
-  const handlePresetChange = (idx) => {
-    setAiPreset(idx);
-    const preset = AI_PRESETS[idx];
-    if (idx < AI_PRESETS.length - 1) {
-      setAiBaseUrl(preset.baseUrl);
-      setAiModelName(preset.modelName);
-    }
-  };
+
 
   const handleCreateRoom = () => {
     if (!playerName.trim()) {
@@ -106,16 +90,6 @@ export default function Lobby({ playerName, setPlayerName }) {
       excludeTags,
     };
 
-    // Only include aiConfig if not using default
-    const preset = AI_PRESETS[aiPreset];
-    if (aiPreset !== 0) {
-      config.aiConfig = {
-        provider: preset.provider,
-        apiKey: aiApiKey,
-        baseUrl: aiBaseUrl || preset.baseUrl,
-        modelName: aiModelName || preset.modelName,
-      };
-    }
 
     const newRoomId = Math.random().toString(36).substring(2, 6).toUpperCase();
     navigate(`/room/${newRoomId}`, { state: { config } });
@@ -227,34 +201,12 @@ export default function Lobby({ playerName, setPlayerName }) {
                 <input type="text" className="input-field" value={pointsStr} onChange={(e) => setPointsStr(e.target.value)} />
               </div>
 
-              {/* AI Model Config */}
+              {/* AI Model Info */}
               <div style={{ borderTop: '1px solid rgba(16,185,129,0.1)', paddingTop: '1rem' }}>
-                <label style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--accent-color)', marginBottom: '0.5rem', display: 'block' }}>🤖 AI 模型设置</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                  <select
-                    className="input-field"
-                    value={aiPreset}
-                    onChange={(e) => handlePresetChange(parseInt(e.target.value))}
-                    style={{ fontSize: '0.9rem' }}
-                  >
-                    {AI_PRESETS.map((p, i) => (
-                      <option key={i} value={i}>{p.name} — {p.description}</option>
-                    ))}
-                  </select>
-
-                  {aiPreset !== 0 && (
-                    <>
-                      <input type="password" className="input-field" placeholder="API Key"
-                        value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)}
-                        style={{ fontSize: '0.85rem' }} />
-                      <input type="text" className="input-field" placeholder="Base URL"
-                        value={aiBaseUrl} onChange={(e) => setAiBaseUrl(e.target.value)}
-                        style={{ fontSize: '0.85rem' }} />
-                      <input type="text" className="input-field" placeholder="模型名称"
-                        value={aiModelName} onChange={(e) => setAiModelName(e.target.value)}
-                        style={{ fontSize: '0.85rem' }} />
-                    </>
-                  )}
+                <label style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--accent-color)', marginBottom: '0.5rem', display: 'block' }}>🤖 AI 模型</label>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '0.6rem 0.8rem', background: 'rgba(16,185,129,0.05)', borderRadius: '0.4rem', border: '1px solid rgba(16,185,129,0.1)' }}>
+                  <div>出题：<strong>DeepSeek Chat</strong>（快速稳定）</div>
+                  <div>判卷：<strong>DeepSeek Reasoner</strong>（推理精准）</div>
                 </div>
               </div>
 
