@@ -32,6 +32,17 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   socket.on('joinRoom', ({ roomId, playerName, config }, callback) => {
+    // Leave previous room if any to prevent cross-room ghost state
+    if (socket.data && socket.data.roomId && socket.data.roomId !== roomId) {
+      const oldRoomId = socket.data.roomId;
+      socket.leave(oldRoomId);
+      if (rooms[oldRoomId]) {
+        rooms[oldRoomId].players = rooms[oldRoomId].players.filter(p => p.id !== socket.id);
+        if (rooms[oldRoomId].players.length === 0) delete rooms[oldRoomId];
+        else io.to(oldRoomId).emit('roomUpdate', rooms[oldRoomId]);
+      }
+    }
+
     socket.join(roomId);
     if (!rooms[roomId]) {
       rooms[roomId] = {
@@ -96,6 +107,23 @@ io.on('connection', (socket) => {
 
       if (allReady && hasTeamA && hasTeamB && room.status === 'waiting') {
         startGame(roomId);
+      }
+    }
+  });
+
+  socket.on('leaveRoom', ({ roomId }) => {
+    socket.leave(roomId);
+    if (socket.data.roomId === roomId) delete socket.data.roomId;
+    if (rooms[roomId]) {
+      rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== socket.id);
+      if (rooms[roomId].players.length === 0) {
+        delete rooms[roomId];
+      } else {
+        // If game is waiting, unready everyone left to be safe
+        if (rooms[roomId].status === 'waiting') {
+          rooms[roomId].players.forEach(p => p.ready = false);
+        }
+        io.to(roomId).emit('roomUpdate', rooms[roomId]);
       }
     }
   });
