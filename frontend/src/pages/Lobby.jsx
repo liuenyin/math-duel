@@ -280,11 +280,14 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
       <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '1.5rem', alignSelf: 'stretch' }}>
 
         {/* Active Rooms */}
-        <div className="glass-panel" style={{ flex: '0 0 auto', maxHeight: '40vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="glass-panel" style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: '30vh' }}>
           <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>
             在场对局 ({activeRooms.length})
           </h3>
-          <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.8rem', paddingRight: '0.5rem' }}>
+          <div style={{
+            overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gap: '0.8rem', paddingRight: '0.5rem', alignContent: 'start'
+          }}>
             {activeRooms.length === 0 ? (
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textAlign: 'center', padding: '1rem 0' }}>暂无正在进行的房间</p>
             ) : (
@@ -326,7 +329,7 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
         </div>
 
         {/* Global Chat */}
-        <div className="glass-panel" style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', minHeight: '350px' }}>
+        <div className="glass-panel" style={{ flex: '0 0 360px', display: 'flex', flexDirection: 'column' }}>
           <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>
             🌍 公共水区
           </h3>

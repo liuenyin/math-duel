@@ -26,8 +26,18 @@ const getActiveRoomsList = () => {
       status: r.status,
       playersA: r.players.filter(p => p.team === 'A').map(p => p.name),
       playersB: r.players.filter(p => p.team === 'B').map(p => p.name),
-      dataset: r.config?.dataset || 'all'
+      dataset: r.config?.dataset || 'all',
+      createdAt: r.createdAt
     };
+  });
+
+  // Sort: waiting > playing > ended, then by newest
+  const statusOrder = { waiting: 0, playing: 1, ended: 2 };
+  return list.sort((a, b) => {
+    if (statusOrder[a.status] !== statusOrder[b.status]) {
+      return statusOrder[a.status] - statusOrder[b.status];
+    }
+    return b.createdAt - a.createdAt;
   });
 };
 
@@ -101,7 +111,8 @@ io.on('connection', (socket) => {
         state: { scoresTracker: { A: {}, B: {} }, locks: {} },
         skipVotes: { A: false, B: false },
         replaceVotes: {}, // { probIndex: { A: false, B: false } }
-        chatHistory: []
+        chatHistory: [],
+        createdAt: Date.now()
       };
 
       // PRE-GENERATE problems immediately upon room creation
