@@ -113,15 +113,20 @@ io.on('connection', (socket) => {
 
     let player = rooms[roomId].players.find(p => p.id === socket.id);
     if (!player) {
-      if (rooms[roomId].status === 'waiting') {
+      player = rooms[roomId].players.find(p => p.name === playerName);
+      if (player && player.connected === false && rooms[roomId].status !== 'ended') {
+        player.id = socket.id; // Reclaim spot
+        player.connected = true;
+      } else if (rooms[roomId].status === 'waiting') {
         const teamA = getTeamCount(rooms[roomId], 'A');
         const teamB = getTeamCount(rooms[roomId], 'B');
         const assignTeam = teamA <= teamB ? 'A' : 'B';
-        player = { id: socket.id, name: playerName, team: assignTeam, score: 0, ready: false };
+        player = { id: socket.id, name: playerName, team: assignTeam, score: 0, ready: false, connected: true };
         rooms[roomId].players.push(player);
       }
     } else {
       player.name = playerName;
+      player.connected = true;
     }
 
     // Store roomId on socket for chat
@@ -169,23 +174,25 @@ io.on('connection', (socket) => {
     socket.leave(roomId);
     if (socket.data.roomId === roomId) delete socket.data.roomId;
     if (rooms[roomId]) {
-      rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== socket.id);
-      if (rooms[roomId].players.length === 0) {
-        delete rooms[roomId];
-      } else {
-        // If game is waiting, unready everyone left to be safe
-        if (rooms[roomId].status === 'waiting') {
+      if (rooms[roomId].status === 'waiting') {
+        rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== socket.id);
+        if (rooms[roomId].players.length === 0) {
+          delete rooms[roomId];
+        } else {
           rooms[roomId].players.forEach(p => p.ready = false);
           io.to(roomId).emit('roomUpdate', rooms[roomId]);
-        } else if (rooms[roomId].status === 'playing') {
-          const teamA = getTeamCount(rooms[roomId], 'A');
-          const teamB = getTeamCount(rooms[roomId], 'B');
-          if (teamA === 0) handleSurrender(roomId, 'A');
-          else if (teamB === 0) handleSurrender(roomId, 'B');
-          else io.to(roomId).emit('roomUpdate', rooms[roomId]);
-        } else {
-          io.to(roomId).emit('roomUpdate', rooms[roomId]);
         }
+      } else if (rooms[roomId].status === 'playing') {
+        const player = rooms[roomId].players.find(p => p.id === socket.id);
+        if (player) player.connected = false;
+
+        const teamAActive = rooms[roomId].players.filter(p => p.team === 'A' && p.connected !== false).length;
+        const teamBActive = rooms[roomId].players.filter(p => p.team === 'B' && p.connected !== false).length;
+        if (teamAActive === 0) handleSurrender(roomId, 'A');
+        else if (teamBActive === 0) handleSurrender(roomId, 'B');
+        else io.to(roomId).emit('roomUpdate', rooms[roomId]);
+      } else {
+        io.to(roomId).emit('roomUpdate', rooms[roomId]);
       }
       broadcastActiveRooms();
     }
@@ -303,6 +310,10 @@ io.on('connection', (socket) => {
         const existingIds = new Set(existingProblems.map(p => p.id));
         const newProbs = problemPool.getRandomProblems(1, room.config, existingIds);
         const newProb = newProbs[0];
+
+        // Critical: Update backend problem state
+        room.problems[probIndex] = newProb;
+
         // Reset scores for this problem
         room.state.scoresTracker.A[probIndex] = 0;
         room.state.scoresTracker.B[probIndex] = 0;
@@ -434,22 +445,23 @@ io.on('connection', (socket) => {
       const room = rooms[roomId];
       const playerIndex = room.players.findIndex(p => p.id === socket.id);
       if (playerIndex !== -1) {
-        room.players.splice(playerIndex, 1);
-        if (room.players.length === 0) {
-          delete rooms[roomId];
-        } else {
-          if (room.status === 'waiting') {
+        if (room.status === 'waiting') {
+          room.players.splice(playerIndex, 1);
+          if (room.players.length === 0) {
+            delete rooms[roomId];
+          } else {
             room.players.forEach(p => p.ready = false);
             io.to(roomId).emit('roomUpdate', room);
-          } else if (room.status === 'playing') {
-            const teamA = getTeamCount(room, 'A');
-            const teamB = getTeamCount(room, 'B');
-            if (teamA === 0) handleSurrender(roomId, 'A');
-            else if (teamB === 0) handleSurrender(roomId, 'B');
-            else io.to(roomId).emit('roomUpdate', room);
-          } else {
-            io.to(roomId).emit('roomUpdate', room);
           }
+        } else if (room.status === 'playing') {
+          room.players[playerIndex].connected = false;
+          const teamAActive = room.players.filter(p => p.team === 'A' && p.connected !== false).length;
+          const teamBActive = room.players.filter(p => p.team === 'B' && p.connected !== false).length;
+          if (teamAActive === 0) handleSurrender(roomId, 'A');
+          else if (teamBActive === 0) handleSurrender(roomId, 'B');
+          else io.to(roomId).emit('roomUpdate', room);
+        } else {
+          io.to(roomId).emit('roomUpdate', room);
         }
         broadcastActiveRooms();
       }
