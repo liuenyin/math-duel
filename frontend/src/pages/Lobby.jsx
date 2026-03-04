@@ -305,7 +305,13 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
                       </span>
                     </div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                      题库：{r.dataset === 'math' ? 'MATH' : r.dataset === 'olympiad' ? 'OlympiadBench' : '混合'} | 玩家：{r.players.length}人
+                      题库：{r.dataset === 'math' ? 'MATH' : r.dataset === 'olympiad' ? 'OlympiadBench' : '混合'}
+                    </div>
+                    {/* Add players VS info */}
+                    <div style={{ fontSize: '0.85rem', marginTop: '0.4rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: '#10b981', fontWeight: 500 }}>{r.playersA?.join(', ') || '等待加入'}</span>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontStyle: 'italic' }}>VS</span>
+                      <span style={{ color: '#3b82f6', fontWeight: 500 }}>{r.playersB?.join(', ') || '等待加入'}</span>
                     </div>
                   </div>
                   <button className={`btn ${r.status === 'waiting' ? '' : 'btn-secondary'}`}

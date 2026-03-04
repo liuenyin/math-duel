@@ -24,7 +24,8 @@ const getActiveRoomsList = () => {
     return {
       id,
       status: r.status,
-      players: r.players.map(p => p.name),
+      playersA: r.players.filter(p => p.team === 'A').map(p => p.name),
+      playersB: r.players.filter(p => p.team === 'B').map(p => p.name),
       dataset: r.config?.dataset || 'all'
     };
   });
@@ -119,6 +120,10 @@ io.on('connection', (socket) => {
     socket.data.roomId = roomId;
 
     io.to(roomId).emit('roomUpdate', rooms[roomId]);
+    if (rooms[roomId].status === 'playing' && rooms[roomId].problems.length > 0) {
+      socket.emit('paperGenerated', { paper: rooms[roomId].problems, total: rooms[roomId].config.numQuestions });
+    }
+
     if (callback) callback({ success: true, room: rooms[roomId] });
   });
 
