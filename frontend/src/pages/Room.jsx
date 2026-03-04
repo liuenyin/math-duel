@@ -18,6 +18,7 @@ export default function Room({ socket, playerName }) {
   const [steps, setSteps] = useState('');
   const [feedbackMsg, setFeedbackMsg] = useState('');
   const [winnerTeam, setWinnerTeam] = useState(null);
+  const [surrenderTeam, setSurrenderTeam] = useState(null);
   const [judging, setJudging] = useState(false);
 
   // Chat state
@@ -36,6 +37,7 @@ export default function Room({ socket, playerName }) {
       setRoom(updatedRoom);
       if (updatedRoom.status === 'playing' || updatedRoom.status === 'generating') {
         setWinnerTeam(null);
+        setSurrenderTeam(null);
         setFeedbackMsg('');
       }
     });
@@ -95,6 +97,7 @@ export default function Room({ socket, playerName }) {
 
     socket.on('matchEnded', (data) => {
       setWinnerTeam(data.winner);
+      if (data.surrenderTeam) setSurrenderTeam(data.surrenderTeam);
     });
 
     socket.on('chatMessage', (msg) => {
@@ -283,6 +286,11 @@ export default function Room({ socket, playerName }) {
               fontSize: '1.1rem', boxShadow: '0 2px 12px rgba(16, 185, 129, 0.3)'
             }}>
               🏆 比赛结束！{winnerTeam} 队获胜！
+              {surrenderTeam && (
+                <div style={{ fontSize: '0.9rem', marginTop: '0.6rem', fontWeight: 'normal', color: 'rgba(255,255,255,0.95)' }}>
+                  (对方 {surrenderTeam} 队已经举白旗投降啦，小杂鱼哦~ 🐟🏳️)
+                </div>
+              )}
             </div>
           )}
 
@@ -509,12 +517,17 @@ export default function Room({ socket, playerName }) {
                                 borderRadius: '6px', minHeight: '1.6rem', lineHeight: 1.8, whiteSpace: 'pre-wrap'
                               }} />
                             </div>
-                            <div style={{ display: 'flex', gap: '0.75rem' }}>
-                              <button type="submit" className="btn" disabled={(!answer.trim() && !steps.trim()) || judging} style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                              <button type="submit" className="btn" disabled={(!answer.trim() && !steps.trim()) || judging} style={{ flex: 2, minWidth: '120px' }}>
                                 {judging ? '批改中...' : '提交答案'}
                               </button>
-                              <button type="button" className="btn btn-secondary" onClick={() => socket.emit('voteSkip', { roomId: id })}>
+                              <button type="button" className="btn btn-secondary" onClick={() => socket.emit('voteSkip', { roomId: id })} style={{ flex: 1, minWidth: '120px' }}>
                                 {room.skipVotes[myTeam] ? '已投票跳过' : '投票跳过本卷'}
+                              </button>
+                              <button type="button" className="btn"
+                                style={{ flex: 1, minWidth: '100px', background: 'transparent', border: '1px solid #ef4444', color: '#ef4444' }}
+                                onClick={() => { if (confirm('确定要投降吗？投降后将直接判负。')) socket.emit('surrender', { roomId: id }); }}>
+                                🏳️ 投降
                               </button>
                             </div>
                           </>

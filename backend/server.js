@@ -47,6 +47,15 @@ const checkWinCondition = (roomId) => {
   return null;
 };
 
+const handleSurrender = (roomId, surrenderTeam) => {
+  const room = rooms[roomId];
+  if (!room || room.status !== 'playing') return;
+  const winner = surrenderTeam === 'A' ? 'B' : 'A';
+  room.status = 'ended';
+  io.to(roomId).emit('matchEnded', { winner, room, surrenderTeam });
+  broadcastActiveRooms();
+};
+
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
@@ -167,11 +176,37 @@ io.on('connection', (socket) => {
         // If game is waiting, unready everyone left to be safe
         if (rooms[roomId].status === 'waiting') {
           rooms[roomId].players.forEach(p => p.ready = false);
+          io.to(roomId).emit('roomUpdate', rooms[roomId]);
+        } else if (rooms[roomId].status === 'playing') {
+          const teamA = getTeamCount(rooms[roomId], 'A');
+          const teamB = getTeamCount(rooms[roomId], 'B');
+          if (teamA === 0) handleSurrender(roomId, 'A');
+          else if (teamB === 0) handleSurrender(roomId, 'B');
+          else io.to(roomId).emit('roomUpdate', rooms[roomId]);
+        } else {
+          io.to(roomId).emit('roomUpdate', rooms[roomId]);
         }
-        io.to(roomId).emit('roomUpdate', rooms[roomId]);
       }
       broadcastActiveRooms();
     }
+  });
+
+  socket.on('surrender', ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || room.status !== 'playing') return;
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player) return; // Spectators cannot surrender
+
+    room.chatHistory.push({
+      senderId: 'system',
+      senderName: '系统',
+      team: 'system',
+      message: `${player.name} (${player.team}队) 发起了投降！`,
+      chatType: 'all',
+      timestamp: Date.now()
+    });
+
+    handleSurrender(roomId, player.team);
   });
 
   socket.on('voteSkip', ({ roomId }) => {
@@ -403,8 +438,18 @@ io.on('connection', (socket) => {
         if (room.players.length === 0) {
           delete rooms[roomId];
         } else {
-          room.players.forEach(p => p.ready = false);
-          if (room.status === 'waiting') io.to(roomId).emit('roomUpdate', room);
+          if (room.status === 'waiting') {
+            room.players.forEach(p => p.ready = false);
+            io.to(roomId).emit('roomUpdate', room);
+          } else if (room.status === 'playing') {
+            const teamA = getTeamCount(room, 'A');
+            const teamB = getTeamCount(room, 'B');
+            if (teamA === 0) handleSurrender(roomId, 'A');
+            else if (teamB === 0) handleSurrender(roomId, 'B');
+            else io.to(roomId).emit('roomUpdate', room);
+          } else {
+            io.to(roomId).emit('roomUpdate', room);
+          }
         }
         broadcastActiveRooms();
       }
