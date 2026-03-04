@@ -189,13 +189,28 @@ export default function Room({ socket, playerName }) {
   }
 
   const me = room.players.find(p => p.id === socket.id);
-  if (!me) return null;
+  const isSpectator = !me && room.status !== 'waiting';
+
+  if (!me && room.status === 'waiting') {
+    // We should be added by server soon if status is waiting.
+    return (
+      <div className="page-container" style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="loading-spinner" style={{ margin: '0 auto 1rem' }}></div>
+          <p style={{ color: 'var(--text-secondary)' }}>正在分配队伍...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const myTeam = isSpectator ? 'spectator' : me.team;
 
   const teamA = room.players.filter(p => p.team === 'A');
   const teamB = room.players.filter(p => p.team === 'B');
   const targetScore = room.config.points.reduce((a, b) => a + b, 0) / 2;
 
   const handleJoinTeam = (teamStr) => {
+    if (isSpectator) return;
     if (me.team !== teamStr) socket.emit('switchTeam', { roomId: id, team: teamStr });
   };
 
@@ -207,22 +222,23 @@ export default function Room({ socket, playerName }) {
 
   const isProbLockedByOther = (idx) => {
     const lock = room.state.locks[idx];
-    return lock && lock !== me.team;
+    return lock && lock !== myTeam;
   };
   const isProbLockedByUs = (idx) => {
     const lock = room.state.locks[idx];
-    return lock === me.team;
+    return lock === myTeam;
   };
 
   const sendChat = (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    socket.emit('sendChat', { roomId: id, message: chatInput.trim(), chatType: chatTab });
+    socket.emit('sendChat', { roomId: id, message: chatInput.trim(), chatType: chatTab, playerName });
     setChatInput('');
   };
 
   const handleReplaceProblem = (idx) => {
-    const hasVoted = room.replaceVotes?.[idx]?.[me.team];
+    if (isSpectator) return;
+    const hasVoted = room.replaceVotes?.[idx]?.[myTeam];
     if (hasVoted) return; // already voted
 
     if (confirm(`确定要提议换掉第 ${idx + 1} 题吗？需对方同意，更换后该题的得分将被重置。`)) {
@@ -231,7 +247,7 @@ export default function Room({ socket, playerName }) {
   };
 
   const filteredMessages = chatMessages.filter(m =>
-    chatTab === 'all' ? m.chatType === 'all' : (m.chatType === 'team' && m.team === me.team)
+    chatTab === 'all' ? m.chatType === 'all' : (m.chatType === 'team' && m.team === myTeam)
   );
 
   const teamAColor = '#10b981';
@@ -244,8 +260,9 @@ export default function Room({ socket, playerName }) {
     <div className="page-container animate-fade-in" style={{ maxWidth: '1400px' }}>
       {/* Header bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '1.25rem' }}>
-        <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+        <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           数学对决 · 房间 <span style={{ color: 'var(--accent-color)' }}>{id}</span>
+          {isSpectator && <span style={{ fontSize: '0.8rem', background: '#f59e0b', color: 'white', padding: '0.2rem 0.5rem', borderRadius: '4px' }}>旁观模式</span>}
         </h2>
         <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
           <h3 style={{ color: teamAColor, fontSize: '1rem', fontWeight: 600 }}>A队：{room.teamScores.A.toFixed(1)} / {targetScore}</h3>
@@ -291,9 +308,9 @@ export default function Room({ socket, playerName }) {
               }}>
                 <h4 style={{ margin: '0 0 1rem 0', color: 'var(--accent-blue)', fontSize: '1.05rem', borderBottom: '1px solid rgba(59, 130, 246, 0.1)', paddingBottom: '0.5rem' }}>房间配置信息</h4>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                  <div><strong style={{ color: 'var(--text-primary)' }}>题库来源：</strong> {room.config.dataset === 'math' ? 'MATH' : room.config.dataset === 'olympiad' ? 'OlympiadBench' : '全量混合题库'}</div>
                   <div><strong style={{ color: 'var(--text-primary)' }}>题目数量：</strong> {room.config.numQuestions} 题</div>
-                  <div><strong style={{ color: 'var(--text-primary)' }}>难度范围：</strong> {room.config.minDifficulty} - {room.config.maxDifficulty}</div>
-                  <div><strong style={{ color: 'var(--text-primary)' }}>AI 模型：</strong> DeepSeek（出题 Chat / 判卷 Reasoner）</div>
+                  <div style={{ gridColumn: '1 / -1' }}><strong style={{ color: 'var(--text-primary)' }}>包含难度：</strong> {room.config.difficulties?.join(', ')}</div>
                   <div>
                     <strong style={{ color: 'var(--text-primary)' }}>包含标签：</strong>
                     {room.config.includeTags?.length > 0 ? room.config.includeTags.join(', ') : '无'}
@@ -329,13 +346,15 @@ export default function Room({ socket, playerName }) {
                   <button className="btn btn-blue" style={{ marginTop: '1rem', fontSize: '0.9rem' }} onClick={() => handleJoinTeam('B')}>加入 B 队</button>
                 </div>
               </div>
-              <button
-                className={`btn ${me.ready ? 'btn-secondary' : ''}`}
-                onClick={() => socket.emit('setReady', { roomId: id, ready: !me.ready })}
-                style={{ width: '50%' }}
-              >
-                {me.ready ? "取消准备" : "已准备 ✓"}
-              </button>
+              {!isSpectator && (
+                <button
+                  className={`btn ${me.ready ? 'btn-secondary' : ''}`}
+                  onClick={() => socket.emit('setReady', { roomId: id, ready: !me.ready })}
+                  style={{ width: '50%' }}
+                >
+                  {me.ready ? "取消准备" : "已准备 ✓"}
+                </button>
+              )}
             </div>
           )}
 
@@ -397,6 +416,15 @@ export default function Room({ socket, playerName }) {
                       }}>
                         难度：{paper[activeProb]?.difficulty}
                       </span>
+                      {paper[activeProb]?.source && (
+                        <span style={{
+                          fontSize: '0.78rem', fontWeight: 600,
+                          background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.2)',
+                          color: 'var(--accent-blue)', padding: '0.2rem 0.6rem', borderRadius: '6px'
+                        }}>
+                          来源：{paper[activeProb].source === 'math' ? 'MATH' : 'OlympiadBench'}
+                        </span>
+                      )}
                       {paper[activeProb]?.tags?.map(t => (
                         <span key={t} style={{
                           fontSize: '0.78rem', background: 'rgba(16, 185, 129, 0.08)',
@@ -405,10 +433,10 @@ export default function Room({ socket, playerName }) {
                         }}>{t}</span>
                       ))}
                       {/* Replace button section */}
-                      {room.status === 'playing' && !isProbLockedByUs(activeProb) && !isProbLockedByOther(activeProb) && (
+                      {room.status === 'playing' && !isSpectator && !isProbLockedByUs(activeProb) && !isProbLockedByOther(activeProb) && (
                         (() => {
-                          const hasRequested = room.replaceVotes?.[activeProb]?.[me.team];
-                          const otherTeamRequested = room.replaceVotes?.[activeProb]?.[me.team === 'A' ? 'B' : 'A'];
+                          const hasRequested = room.replaceVotes?.[activeProb]?.[myTeam];
+                          const otherTeamRequested = room.replaceVotes?.[activeProb]?.[myTeam === 'A' ? 'B' : 'A'];
 
                           if (hasRequested) {
                             return (
@@ -451,7 +479,7 @@ export default function Room({ socket, playerName }) {
                       }}
                     />
 
-                    {room.status === 'playing' && (
+                    {room.status === 'playing' && !isSpectator && (
                       <form onSubmit={submitAnswer} style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
                         {isProbLockedByOther(activeProb) ? (
                           <div style={{
@@ -486,7 +514,7 @@ export default function Room({ socket, playerName }) {
                                 {judging ? '批改中...' : '提交答案'}
                               </button>
                               <button type="button" className="btn btn-secondary" onClick={() => socket.emit('voteSkip', { roomId: id })}>
-                                {room.skipVotes[me.team] ? '已投票跳过' : '投票跳过本卷'}
+                                {room.skipVotes[myTeam] ? '已投票跳过' : '投票跳过本卷'}
                               </button>
                             </div>
                           </>
@@ -498,7 +526,7 @@ export default function Room({ socket, playerName }) {
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
                     <div className="loading-spinner"></div>
                     <p className="animate-pulse" style={{ color: 'var(--text-secondary)' }}>
-                      {replacingProbs[activeProb] ? '正在更换题目...' : 'AI 正在生成第 ' + (activeProb + 1) + ' 题...'}
+                      {replacingProbs[activeProb] ? '正在从题库更换题目...' : '正在加载题目...'}
                     </p>
                   </div>
                 )}
@@ -506,12 +534,10 @@ export default function Room({ socket, playerName }) {
             </div>
           )}
 
-          {/* No paper and not waiting — initial generation state */}
           {room.status === 'playing' && !hasPaper && (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
               <div className="loading-spinner"></div>
-              <h3 className="animate-pulse" style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>AI 正在出题...</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', opacity: 0.7 }}>这大概需要 1-3 分钟，请耐心等待</p>
+              <h3 className="animate-pulse" style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>正在从题库加载题目...</h3>
             </div>
           )}
         </div>
@@ -528,15 +554,17 @@ export default function Room({ socket, playerName }) {
                 borderBottom: chatTab === 'all' ? '2px solid var(--accent-color)' : '2px solid transparent',
                 transition: 'all 0.2s'
               }}>💬 全体聊天</button>
-            <button onClick={() => setChatTab('team')}
-              style={{
-                flex: 1, padding: '0.5rem', border: 'none', cursor: 'pointer',
-                background: chatTab === 'team' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                color: chatTab === 'team' ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                fontWeight: chatTab === 'team' ? 600 : 400, fontSize: '0.85rem',
-                borderBottom: chatTab === 'team' ? '2px solid var(--accent-blue)' : '2px solid transparent',
-                transition: 'all 0.2s'
-              }}>🔒 队内聊天</button>
+            {!isSpectator && (
+              <button onClick={() => setChatTab('team')}
+                style={{
+                  flex: 1, padding: '0.5rem', border: 'none', cursor: 'pointer',
+                  background: chatTab === 'team' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                  color: chatTab === 'team' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                  fontWeight: chatTab === 'team' ? 600 : 400, fontSize: '0.85rem',
+                  borderBottom: chatTab === 'team' ? '2px solid var(--accent-blue)' : '2px solid transparent',
+                  transition: 'all 0.2s'
+                }}>🔒 队内聊天</button>
+            )}
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', padding: '0.25rem', minHeight: 0 }}>

@@ -2,7 +2,8 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import { generateSingleProblem, generateBatchProblems, judgeAnswerSteps } from './ai.js';
+import { judgeAnswerSteps } from './ai.js';
+import { problemPool } from './problemPool.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -15,6 +16,23 @@ const server = createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
 const rooms = {};
+const globalChat = []; // { senderName, message, timestamp }
+
+const getActiveRoomsList = () => {
+  return Object.keys(rooms).map(id => {
+    const r = rooms[id];
+    return {
+      id,
+      status: r.status,
+      players: r.players.map(p => p.name),
+      dataset: r.config?.dataset || 'all'
+    };
+  });
+};
+
+const broadcastActiveRooms = () => {
+  io.emit('activeRoomsUpdate', getActiveRoomsList());
+};
 
 // Helpers
 const getTeamCount = (room, team) => room.players.filter(p => p.team === team).length;
@@ -30,6 +48,24 @@ const checkWinCondition = (roomId) => {
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
+
+  // Global Lobby
+  socket.on('joinLobby', () => {
+    socket.emit('activeRoomsUpdate', getActiveRoomsList());
+    socket.emit('globalChatHistory', globalChat);
+  });
+
+  socket.on('sendGlobalChat', ({ playerName, message }) => {
+    if (!playerName || !message.trim()) return;
+    const msg = {
+      senderName: playerName,
+      message: message.substring(0, 500),
+      timestamp: Date.now()
+    };
+    globalChat.push(msg);
+    if (globalChat.length > 50) globalChat.shift();
+    io.emit('newGlobalChat', msg);
+  });
 
   socket.on('joinRoom', ({ roomId, playerName, config }, callback) => {
     // Leave previous room if any to prevent cross-room ghost state
@@ -62,15 +98,18 @@ io.on('connection', (socket) => {
       if (config) {
         preGenerateProblems(roomId);
       }
+      broadcastActiveRooms();
     }
 
     let player = rooms[roomId].players.find(p => p.id === socket.id);
     if (!player) {
-      const teamA = getTeamCount(rooms[roomId], 'A');
-      const teamB = getTeamCount(rooms[roomId], 'B');
-      const assignTeam = teamA <= teamB ? 'A' : 'B';
-      player = { id: socket.id, name: playerName, team: assignTeam, score: 0, ready: false };
-      rooms[roomId].players.push(player);
+      if (rooms[roomId].status === 'waiting') {
+        const teamA = getTeamCount(rooms[roomId], 'A');
+        const teamB = getTeamCount(rooms[roomId], 'B');
+        const assignTeam = teamA <= teamB ? 'A' : 'B';
+        player = { id: socket.id, name: playerName, team: assignTeam, score: 0, ready: false };
+        rooms[roomId].players.push(player);
+      }
     } else {
       player.name = playerName;
     }
@@ -107,6 +146,7 @@ io.on('connection', (socket) => {
 
       if (allReady && hasTeamA && hasTeamB && room.status === 'waiting') {
         startGame(roomId);
+        broadcastActiveRooms();
       }
     }
   });
@@ -125,6 +165,7 @@ io.on('connection', (socket) => {
         }
         io.to(roomId).emit('roomUpdate', rooms[roomId]);
       }
+      broadcastActiveRooms();
     }
   });
 
@@ -146,16 +187,21 @@ io.on('connection', (socket) => {
   });
 
   // ===== Chat =====
-  socket.on('sendChat', ({ roomId, message, chatType }) => {
+  socket.on('sendChat', ({ roomId, message, chatType, playerName }) => {
     const room = rooms[roomId];
     if (!room) return;
     const player = room.players.find(p => p.id === socket.id);
-    if (!player) return;
+
+    // If not a player and trying to send team chat, block it.
+    if (!player && chatType === 'team') return;
+
+    const pName = player ? player.name : (playerName || '旁观者');
+    const pTeam = player ? player.team : 'spectator';
 
     const msg = {
       senderId: socket.id,
-      senderName: player.name,
-      team: player.team,
+      senderName: pName,
+      team: pTeam,
       message: message.substring(0, 500),
       chatType,
       timestamp: Date.now()
@@ -214,9 +260,9 @@ io.on('connection', (socket) => {
 
       try {
         const existingProblems = room.problems.filter((_, i) => i !== probIndex);
-        const newProb = await generateSingleProblem(room.config, null, existingProblems);
-
-        room.problems[probIndex] = newProb;
+        const existingIds = new Set(existingProblems.map(p => p.id));
+        const newProbs = problemPool.getRandomProblems(1, room.config, existingIds);
+        const newProb = newProbs[0];
         // Reset scores for this problem
         room.state.scoresTracker.A[probIndex] = 0;
         room.state.scoresTracker.B[probIndex] = 0;
@@ -237,6 +283,50 @@ io.on('connection', (socket) => {
       const msg = {
         senderId: 'system', senderName: '系统', team: 'system',
         message: `${team}队请求更换第 ${probIndex + 1} 题，请${otherTeam}队确认。`, chatType: 'all', timestamp: Date.now()
+      };
+      room.chatHistory.push(msg);
+      if (room.chatHistory.length > 200) room.chatHistory.shift();
+      io.to(roomId).emit('chatMessage', msg);
+    }
+  });
+
+  // ===== Vote Skip Paper =====
+  socket.on('voteSkip', async ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || room.status !== 'playing') return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player) return;
+    const team = player.team;
+
+    room.skipVotes[team] = true;
+    io.to(roomId).emit('roomUpdate', room);
+
+    const otherTeam = team === 'A' ? 'B' : 'A';
+
+    if (room.skipVotes.A && room.skipVotes.B) {
+      room.skipVotes = { A: false, B: false };
+      const msg = {
+        senderId: 'system', senderName: '系统', team: 'system',
+        message: `双队同意，正在跳过并更换整套试卷...`, chatType: 'all', timestamp: Date.now()
+      };
+      room.chatHistory.push(msg);
+      io.to(roomId).emit('chatMessage', msg);
+
+      // Reset match values
+      room.replaceVotes = {};
+      room.state.scoresTracker = { A: {}, B: {} };
+      room.state.locks = {};
+      room.teamScores = { A: 0, B: 0 };
+      room.players.forEach(p => p.score = 0);
+      io.to(roomId).emit('paperGenerated', { paper: [], total: room.config.numQuestions || 3 });
+
+      // Regenerate the paper
+      await preGenerateProblems(roomId);
+    } else {
+      const msg = {
+        senderId: 'system', senderName: '系统', team: 'system',
+        message: `${team}队投票跳过本套试卷，请${otherTeam}队确认。`, chatType: 'all', timestamp: Date.now()
       };
       room.chatHistory.push(msg);
       if (room.chatHistory.length > 200) room.chatHistory.shift();
@@ -311,6 +401,7 @@ io.on('connection', (socket) => {
           room.players.forEach(p => p.ready = false);
           if (room.status === 'waiting') io.to(roomId).emit('roomUpdate', room);
         }
+        broadcastActiveRooms();
       }
     }
   });
@@ -323,34 +414,28 @@ async function preGenerateProblems(roomId) {
   room.preGenerating = true;
 
   const numQ = room.config.numQuestions || 3;
-  room.problems = new Array(numQ).fill(null);
 
-  console.log(`[Game] Room ${roomId}: Generating ${numQ} problems concurrently...`);
+  console.log(`[Game] Room ${roomId}: Fetching ${numQ} problems from pool...`);
+  try {
+    const problems = problemPool.getRandomProblems(numQ, room.config);
+    room.problems = problems;
 
-  // Fire all requests at once
-  const promises = Array.from({ length: numQ }, (_, i) => {
-    // Each problem generates independently, existing=[] since they're parallel
-    return generateSingleProblem(room.config, null, [])
-      .catch(error => {
-        console.error(`[Game] Room ${roomId}: Problem ${i + 1} failed:`, error.message);
-        return {
-          problem: `求 $x$，已知 $3^x = ${Math.pow(3, i + 2)}$。`,
-          answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
-          tags: ['对数与指数'], difficulty: 1000
-        };
-      })
-      .then(prob => {
-        // Store and emit immediately when this one resolves
-        room.problems[i] = prob;
-        console.log(`[Game] Room ${roomId}: Problem ${i + 1}/${numQ} ready!`);
-        if (room.status === 'playing') {
-          const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
-          io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
-        }
+    // If we're already playing, emit them immediately
+    if (room.status === 'playing') {
+      room.problems.forEach((prob, i) => {
+        const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
+        io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
       });
-  });
+    }
+  } catch (error) {
+    console.error(`[Game] Room ${roomId}: Failed to fetch problems:`, error.message);
+    room.problems = new Array(numQ).fill(null).map((_, i) => ({
+      problem: `求 $x$，已知 $3^x = ${Math.pow(3, i + 2)}$。`,
+      answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
+      tags: ['对数与指数'], difficulty: 1000
+    }));
+  }
 
-  await Promise.all(promises);
   room.preGenerating = false;
   console.log(`[Game] Room ${roomId}: All ${numQ} problems ready.`);
 }

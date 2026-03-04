@@ -7,6 +7,31 @@ const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 const GEN_MODEL = "deepseek-chat";       // Fast model for problem generation
 const JUDGE_MODEL = "deepseek-reasoner"; // Reasoning model for accurate judging
 
+// ===== Global concurrency limiter (DeepSeek free tier ~2-3 concurrent) =====
+const MAX_CONCURRENT = 2;
+let activeRequests = 0;
+const requestQueue = [];
+
+function acquireSlot() {
+    return new Promise(resolve => {
+        if (activeRequests < MAX_CONCURRENT) {
+            activeRequests++;
+            resolve();
+        } else {
+            requestQueue.push(resolve);
+        }
+    });
+}
+
+function releaseSlot() {
+    if (requestQueue.length > 0) {
+        const next = requestQueue.shift();
+        next(); // don't decrement, the slot transfers
+    } else {
+        activeRequests--;
+    }
+}
+
 // ===== Unified OpenAI-compatible API call with retry =====
 async function callChatCompletion(modelName, prompt, systemPrompt) {
     const url = `${DEEPSEEK_BASE_URL}/chat/completions`;
@@ -31,153 +56,71 @@ async function callChatCompletion(modelName, prompt, systemPrompt) {
     }
 
     const MAX_RETRIES = 3;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-            console.log(`[AI] Calling ${modelName} at ${url} (attempt ${attempt}/${MAX_RETRIES})`);
+    await acquireSlot();
+    try {
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                console.log(`[AI] Calling ${modelName} (attempt ${attempt}/${MAX_RETRIES}, active=${activeRequests}/${MAX_CONCURRENT})`);
 
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 120000); // 120s timeout
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 120000);
 
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-                },
-                body: JSON.stringify(body),
-                signal: controller.signal
-            });
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+                    },
+                    body: JSON.stringify(body),
+                    signal: controller.signal
+                });
 
-            clearTimeout(timeout);
+                clearTimeout(timeout);
 
-            if (!res.ok) {
-                const errText = await res.text();
-                throw new Error(`API error ${res.status}: ${errText.substring(0, 300)}`);
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error(`API error ${res.status}: ${errText.substring(0, 300)}`);
+                }
+
+                const data = await res.json();
+                const text = data.choices?.[0]?.message?.content || '';
+
+                let cleaned = text.trim();
+                cleaned = cleaned.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+
+                const startObj = cleaned.indexOf('{');
+                const startArr = cleaned.indexOf('[');
+                let start = -1;
+                if (startObj !== -1 && startArr !== -1) start = Math.min(startObj, startArr);
+                else if (startObj !== -1) start = startObj;
+                else if (startArr !== -1) start = startArr;
+
+                const endObj = cleaned.lastIndexOf('}');
+                const endArr = cleaned.lastIndexOf(']');
+                let end = -1;
+                if (endObj !== -1 && endArr !== -1) end = Math.max(endObj, endArr);
+                else if (endObj !== -1) end = endObj;
+                else if (endArr !== -1) end = endArr;
+
+                if (start !== -1 && end !== -1 && end > start) {
+                    cleaned = cleaned.substring(start, end + 1);
+                }
+
+                return JSON.parse(cleaned);
+            } catch (e) {
+                console.error(`[AI] Attempt ${attempt} failed: ${e.message}`);
+                if (attempt === MAX_RETRIES) throw e;
+                const delay = Math.pow(2, attempt) * 1000;
+                console.log(`[AI] Retrying in ${delay / 1000}s...`);
+                await new Promise(r => setTimeout(r, delay));
             }
-
-            const data = await res.json();
-            const text = data.choices?.[0]?.message?.content || '';
-
-            // Parse JSON from the response
-            let cleaned = text.trim();
-            // Remove markdown code block wrappers
-            cleaned = cleaned.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-
-            // Find first { or [ and last } or ]
-            const startObj = cleaned.indexOf('{');
-            const startArr = cleaned.indexOf('[');
-            let start = -1;
-            if (startObj !== -1 && startArr !== -1) start = Math.min(startObj, startArr);
-            else if (startObj !== -1) start = startObj;
-            else if (startArr !== -1) start = startArr;
-
-            const endObj = cleaned.lastIndexOf('}');
-            const endArr = cleaned.lastIndexOf(']');
-            let end = -1;
-            if (endObj !== -1 && endArr !== -1) end = Math.max(endObj, endArr);
-            else if (endObj !== -1) end = endObj;
-            else if (endArr !== -1) end = endArr;
-
-            if (start !== -1 && end !== -1 && end > start) {
-                cleaned = cleaned.substring(start, end + 1);
-            }
-
-            return JSON.parse(cleaned);
-        } catch (e) {
-            console.error(`[AI] Attempt ${attempt} failed: ${e.message}`);
-            if (attempt === MAX_RETRIES) throw e;
-            // Exponential backoff: 2s, 4s
-            const delay = Math.pow(2, attempt) * 1000;
-            console.log(`[AI] Retrying in ${delay / 1000}s...`);
-            await new Promise(r => setTimeout(r, delay));
         }
+    } finally {
+        releaseSlot();
     }
 }
 
-// ===== Generate a BATCH of problems (one API call, uses deepseek-chat) =====
-export async function generateBatchProblems(config) {
-    const { numQuestions, minDifficulty, maxDifficulty, includeTags, excludeTags } = config;
-    const count = numQuestions || 3;
 
-    const includeStr = includeTags && includeTags.length > 0
-        ? `题目应涵盖以下标签/知识点之一：${includeTags.join('、')}。` : '';
-    const excludeStr = excludeTags && excludeTags.length > 0
-        ? `严格禁止出现以下知识点：${excludeTags.join('、')}。` : '';
-
-    const prompt = `请生成恰好 ${count} 道数学题目，题目之间不可重复，知识点尽量多样。
-难度范围（Codeforces 等效）：${minDifficulty || 1200} 到 ${maxDifficulty || 1900}。
-${includeStr}
-${excludeStr}
-
-所有内容中文，公式用 LaTeX（$...$ 行内，$$...$$ 行间）。
-解法要求简洁，每题解法不超过3行。
-
-返回一个 JSON 数组，每个元素格式为：
-{"problem":"题干", "answer":"最终答案（简短）", "solution":"简洁解法(不超过3行)", "tags":["标签"], "difficulty":数字}
-只输出JSON，不要任何额外文字。`;
-
-    try {
-        const result = await callChatCompletion(GEN_MODEL, prompt,
-            '你是数学竞赛出题专家。返回 JSON 数组，不要代码块。');
-
-        if (Array.isArray(result)) return result;
-        return [result];
-    } catch (e) {
-        console.error("[AI] Error generating batch problems:", e.message);
-        return Array.from({ length: count }, (_, i) => {
-            const r = Math.floor(Math.random() * 5) + 3;
-            return {
-                problem: `求 $x$ 的值，已知 $${r}^x = ${Math.pow(r, i + 2)}$。（AI 暂时不可用）`,
-                answer: `${i + 2}`,
-                solution: `因为 $${r}^x = ${r}^{${i + 2}}$，所以 $x = ${i + 2}$。`,
-                tags: ["对数与指数"],
-                difficulty: 1000
-            };
-        });
-    }
-}
-
-// ===== Generate a SINGLE problem (for replaceProblem, uses deepseek-chat) =====
-export async function generateSingleProblem(config, _aiConfig, existingProblems) {
-    const { minDifficulty, maxDifficulty, includeTags, excludeTags } = config;
-
-    const includeStr = includeTags && includeTags.length > 0
-        ? `题目应涵盖以下标签/知识点之一：${includeTags.join('、')}。` : '';
-    const excludeStr = excludeTags && excludeTags.length > 0
-        ? `严格禁止出现以下知识点：${excludeTags.join('、')}。` : '';
-
-    const existingDesc = existingProblems && existingProblems.length > 0
-        ? `\n以下题目已经存在，请确保新题目不重复：\n${existingProblems.map((p, i) => `${i + 1}. ${p.problem?.substring(0, 60)}`).join('\n')}` : '';
-
-    const prompt = `请生成恰好 1 道数学题目。
-难度范围（Codeforces 等效）：${minDifficulty || 1200} 到 ${maxDifficulty || 1900}。
-${includeStr}
-${excludeStr}
-${existingDesc}
-
-所有内容中文，公式用 LaTeX（$...$  行内，$$...$$ 行间）。
-
-返回一个 JSON 对象（不是数组）：
-{"problem":"题干", "answer":"答案", "solution":"解法", "tags":["标签"], "difficulty":1500}
-不要包含额外文字。`;
-
-    try {
-        const result = await callChatCompletion(GEN_MODEL, prompt,
-            '你是数学竞赛出题专家。返回单个 JSON 对象，不要数组，不要代码块。');
-        if (Array.isArray(result)) return result[0];
-        return result;
-    } catch (e) {
-        console.error("[AI] Error generating single problem:", e.message);
-        const r = Math.floor(Math.random() * 5) + 3;
-        return {
-            problem: `求 $x$ 的值，已知 $${r}^x = ${Math.pow(r, 2)}$。（AI 暂时不可用）`,
-            answer: `2`,
-            solution: `因为 $${r}^x = ${r}^{2}$，所以 $x = 2$。`,
-            tags: ["对数与指数"],
-            difficulty: 1000
-        };
-    }
-}
 
 // ===== Judge Answer (uses deepseek-reasoner for accuracy) =====
 export async function judgeAnswerSteps(expectedAnswer, solution, userAnswer, userSteps) {
@@ -189,18 +132,19 @@ export async function judgeAnswerSteps(expectedAnswer, solution, userAnswer, use
 学生答案：${userAnswer}
 学生步骤：${userSteps || "未提交"}
 
-评分规则（满分 100%，推导过程占 80%，最终答案占 20%）：
-1. 推导过程完整且正确 → 过程分 60-80%；部分正确 → 按比例给分
-2. 最终答案正确 → 答案分 20%；答案错误 → 答案分 0%
-3. 只有最终答案正确但无推导过程 → 最多只能给 20%，绝对不能更高
-4. 推导过程完整正确 + 答案正确 → 100%
-5. 推导过程正确但最后一步计算失误导致答案错 → 60-80%
-6. 过程和答案都错或胡写 → 0%
+【评分规则】：
+1. 如果该题是典型的“计算/求解题”（有明确的最终数值或表达式结果）：
+   - 满分 100%，推导过程占 80%，最终答案占 20%。
+   - 推导过程完整正确 + 答案正确 → 100%
+   - 只有最终答案正确但无推导过程（或寥寥数字无实质） → 最多只给 20%
+   - 推导正确但最后计算失误 → 60-80%
+   - 过程和答案都错 → 0%
 
-【严格要求】：
-- 如果"学生步骤"为"未提交"或者为空或者只有寥寥几个字没有实质推导，即使答案完全正确，过程分必须为 0，总分最多 20%。
-- 你必须严格按照"过程 80% + 答案 20%"的权重评分，禁止因为答案正确就直接给高分。
-- 只写了一个最终答案没有任何推导的情况，scorePercent 最多为 20。
+2. 如果该题是“证明题”（答案形如“见解析”、“证明略”或题目要求“证明...”）：
+   - 满分 100%，【全部分数 100% 压在推导步骤上】。
+   - 完全不需要死查“最终答案”栏的内容。
+   - 根据学生步骤前后逻辑严密性、与标准证明的契合度给分。
+   - 如果学生步骤为空或无实质内容，直接给 0%。
 
 请直接返回 JSON 对象：{"scorePercent": 0到100的整数, "feedback": "简短中文反馈"}
 不要包含任何额外文字。`;
