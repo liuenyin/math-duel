@@ -122,6 +122,8 @@ export default function Room({ socket, playerName, isRegistered }) {
     else { socket.once('connect', doJoin); }
 
     return () => {
+      // Notify server immediately when leaving the room page
+      socket.emit('leaveRoom', { roomId: id });
       socket.off('roomUpdate');
       socket.off('paperGenerated');
       socket.off('problemAdded');
