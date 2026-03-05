@@ -427,6 +427,16 @@ io.on('connection', (socket) => {
         message: `得分 ${aiResult.scorePercent}%！（${scoreVal.toFixed(1)} 分）：${aiResult.feedback}`
       });
 
+      // Broadcast to chat so everyone can see
+      const chatMsg = {
+        senderId: 'system', senderName: '系统', team: 'system',
+        message: `${team}队 ${player.name} 第${probIndex + 1}题获得 ${aiResult.scorePercent}%（${scoreVal.toFixed(1)}分）：${aiResult.feedback}`,
+        chatType: 'all', timestamp: Date.now()
+      };
+      room.chatHistory.push(chatMsg);
+      if (room.chatHistory.length > 200) room.chatHistory.shift();
+      io.to(roomId).emit('chatMessage', chatMsg);
+
       if (aiResult.scorePercent >= 95) {
         room.state.locks[probIndex] = team;
         const otherTeam = team === 'A' ? 'B' : 'A';
@@ -447,6 +457,16 @@ io.on('connection', (socket) => {
       socket.emit('answerResult', {
         message: `得分 ${aiResult.scorePercent}%，未超过队伍在本题的最高分。反馈：${aiResult.feedback}`
       });
+
+      // Still broadcast to chat even if didn't beat best
+      const chatMsg = {
+        senderId: 'system', senderName: '系统', team: 'system',
+        message: `${team}队 ${player.name} 第${probIndex + 1}题获得 ${aiResult.scorePercent}%（未刷新最高分）：${aiResult.feedback}`,
+        chatType: 'all', timestamp: Date.now()
+      };
+      room.chatHistory.push(chatMsg);
+      if (room.chatHistory.length > 200) room.chatHistory.shift();
+      io.to(roomId).emit('chatMessage', chatMsg);
     }
   });
 

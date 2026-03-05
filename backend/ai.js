@@ -86,7 +86,7 @@ async function callChatCompletion(modelName, prompt, systemPrompt) {
                 const text = data.choices?.[0]?.message?.content || '';
 
                 let cleaned = text.trim();
-                cleaned = cleaned.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+                cleaned = cleaned.replace(/\`\`\`(?:json)?/gi, '').replace(/\`\`\`/g, '').trim();
 
                 const startObj = cleaned.indexOf('{');
                 const startArr = cleaned.indexOf('[');
@@ -133,20 +133,25 @@ export async function judgeAnswerSteps(expectedAnswer, solution, userAnswer, use
 学生步骤：${userSteps || "未提交"}
 
 【评分规则】：
-1. 如果该题是典型的“计算/求解题”（有明确的最终数值或表达式结果）：
+1. 如果该题是典型的"计算/求解题"（有明确的最终数值或表达式结果）：
    - 满分 100%，推导过程占 80%，最终答案占 20%。
    - 推导过程完整正确 + 答案正确 → 100%
    - 只有最终答案正确但无推导过程（或寥寥数字无实质） → 最多只给 20%
    - 推导正确但最后计算失误 → 60-80%
    - 过程和答案都错 → 0%
 
-2. 如果该题是“证明题”（答案形如“见解析”、“证明略”或题目要求“证明...”）：
+2. 如果该题是"证明题"（答案形如"见解析"、"证明略"或题目要求"证明..."）：
    - 满分 100%，【全部分数 100% 压在推导步骤上】。
-   - 完全不需要死查“最终答案”栏的内容。
+   - 完全不需要死查"最终答案"栏的内容。
    - 根据学生步骤前后逻辑严密性、与标准证明的契合度给分。
    - 如果学生步骤为空或无实质内容，直接给 0%。
 
-请直接返回 JSON 对象：{"scorePercent": 0到100的整数, "feedback": "简短中文反馈"}
+【feedback 格式要求（非常重要）】：
+- feedback 必须极短，最多15个字。
+- 只描述扣分原因或正确性，例如："完全正确"、"有跳步"、"计算错误"、"过程不完整"、"答案错误"、"证明不严谨"、"缺少关键步骤"。
+- 严禁给出任何提示、建议或暗示正确方向的内容（如"建议补全讨论"、"未考虑xxx情况"等），因为这是对战场景，不能泄露解题思路。
+
+请直接返回 JSON 对象：{"scorePercent": 0到100的整数, "feedback": "极短中文描述"}
 不要包含任何额外文字。`;
 
     try {
