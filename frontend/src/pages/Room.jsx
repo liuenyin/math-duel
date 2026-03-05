@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
+import { useParams, useLocation, useNavigate, Link } from 'react-router-dom';
 import renderMathInElement from 'katex/contrib/auto-render';
 
-export default function Room({ socket, playerName }) {
+export default function Room({ socket, playerName, isRegistered }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -19,6 +19,7 @@ export default function Room({ socket, playerName }) {
   const [feedbackMsg, setFeedbackMsg] = useState('');
   const [winnerTeam, setWinnerTeam] = useState(null);
   const [surrenderTeam, setSurrenderTeam] = useState(null);
+  const [ratingChanges, setRatingChanges] = useState(null);
   const [judging, setJudging] = useState(false);
 
   // Chat state
@@ -100,6 +101,10 @@ export default function Room({ socket, playerName }) {
       if (data.surrenderTeam) setSurrenderTeam(data.surrenderTeam);
     });
 
+    socket.on('ratingChanges', (changes) => {
+      setRatingChanges(changes);
+    });
+
     socket.on('chatMessage', (msg) => {
       setChatMessages(prev => [...prev, msg]);
     });
@@ -107,7 +112,7 @@ export default function Room({ socket, playerName }) {
     socket.on('globalError', (data) => alert(data.message));
 
     const doJoin = () => {
-      socket.emit('joinRoom', { roomId: id, playerName, config }, (res) => {
+      socket.emit('joinRoom', { roomId: id, playerName, config: { ...config, isRegistered } }, (res) => {
         if (res && res.error) { alert(res.error); navigate('/'); }
       });
     };
@@ -125,6 +130,7 @@ export default function Room({ socket, playerName }) {
       socket.off('answerResult');
       socket.off('problemLocked');
       socket.off('matchEnded');
+      socket.off('ratingChanges');
       socket.off('chatMessage');
       socket.off('globalError');
       socket.off('connect', doJoin);
@@ -291,6 +297,18 @@ export default function Room({ socket, playerName }) {
                   (对方 {surrenderTeam} 队已经举白旗投降啦，小杂鱼哦~ 🐟🏳️)
                 </div>
               )}
+              {ratingChanges && (
+                <div style={{ fontSize: '0.8rem', marginTop: '0.75rem', fontWeight: 'normal', color: 'rgba(255,255,255,0.9)', lineHeight: 1.6 }}>
+                  {Object.entries(ratingChanges).map(([name, rc]) => (
+                    <div key={name}>
+                      {name}: {rc.before} → {rc.after}
+                      <span style={{ marginLeft: '0.3rem', color: rc.change >= 0 ? '#bbf7d0' : '#fecaca' }}>
+                        ({rc.change >= 0 ? '+' : ''}{rc.change})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -341,7 +359,11 @@ export default function Room({ socket, playerName }) {
                   background: me.team === 'A' ? 'rgba(16, 185, 129, 0.06)' : 'transparent', transition: 'all 0.2s'
                 }}>
                   <h4 style={{ color: teamAColor, marginBottom: '0.75rem', fontWeight: 600 }}>A队（{teamA.length}人）</h4>
-                  {teamA.map(p => <div key={p.id} style={{ padding: '0.2rem 0', fontSize: '0.95rem' }}>{p.name} {p.ready ? '✅' : ''}</div>)}
+                  {teamA.map(p => <div key={p.id} style={{ padding: '0.2rem 0', fontSize: '0.95rem' }}>
+                    {!p.isRegistered && <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>[未注册] </span>}
+                    <Link to={p.isRegistered ? `/profile/${p.name}` : '#'} style={{ color: 'inherit', textDecoration: p.isRegistered ? 'underline' : 'none' }}>{p.name}</Link>
+                    {p.ready ? ' ✅' : ''}
+                  </div>)}
                   <button className="btn" style={{ marginTop: '1rem', fontSize: '0.9rem' }} onClick={() => handleJoinTeam('A')}>加入 A 队</button>
                 </div>
                 <div style={{
@@ -350,7 +372,11 @@ export default function Room({ socket, playerName }) {
                   background: me.team === 'B' ? 'rgba(59, 130, 246, 0.06)' : 'transparent', transition: 'all 0.2s'
                 }}>
                   <h4 style={{ color: teamBColor, marginBottom: '0.75rem', fontWeight: 600 }}>B队（{teamB.length}人）</h4>
-                  {teamB.map(p => <div key={p.id} style={{ padding: '0.2rem 0', fontSize: '0.95rem' }}>{p.name} {p.ready ? '✅' : ''}</div>)}
+                  {teamB.map(p => <div key={p.id} style={{ padding: '0.2rem 0', fontSize: '0.95rem' }}>
+                    {!p.isRegistered && <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>[未注册] </span>}
+                    <Link to={p.isRegistered ? `/profile/${p.name}` : '#'} style={{ color: 'inherit', textDecoration: p.isRegistered ? 'underline' : 'none' }}>{p.name}</Link>
+                    {p.ready ? ' ✅' : ''}
+                  </div>)}
                   <button className="btn btn-blue" style={{ marginTop: '1rem', fontSize: '0.9rem' }} onClick={() => handleJoinTeam('B')}>加入 B 队</button>
                 </div>
               </div>

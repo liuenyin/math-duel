@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 const MATH_TAG_CATEGORIES = {
   'MATH (英文)': ['代数', '计数与概率', '几何', '中级代数', '数论', '预备代数', '预备微积分']
@@ -16,7 +16,7 @@ const OB_TAG_CATEGORIES = {
 const MATH_DIFFICULTIES = ['Level 1', 'Level 2', 'Level 3', 'Level 4', 'Level 5'];
 const OB_DIFFICULTIES = ['高考', '竞赛'];
 
-export default function Lobby({ socket, playerName, setPlayerName }) {
+export default function Lobby({ socket, playerName, setPlayerName, isRegistered, userInfo, onLogin, onLogout }) {
   const [roomId, setRoomId] = useState('');
   const navigate = useNavigate();
 
@@ -36,6 +36,14 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
   const [globalChat, setGlobalChat] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const chatEndRef = useRef(null);
+
+  // Auth state
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
     socket.emit('joinLobby');
@@ -102,6 +110,7 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
       points: pts,
       includeTags,
       excludeTags,
+      isRegistered,
     };
 
     const newRoomId = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -111,7 +120,8 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
   const handleJoinRoom = (e, id) => {
     if (e) e.preventDefault();
     const targetRoomId = id || roomId;
-    if (!playerName.trim()) { alert("请先输入你的昵称！"); return; }
+    const displayName = isRegistered ? playerName : playerName.trim();
+    if (!displayName) { alert("请先输入你的昵称！"); return; }
     if (!targetRoomId.trim()) { alert("请输入房间代码！"); return; }
     navigate(`/room/${targetRoomId.toUpperCase()}`);
   };
@@ -140,10 +150,33 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
       {/* ===== LEFT PANEL: ROOM CREATION ===== */}
       <div className="glass-panel" style={{ flex: '1 1 500px', display: 'flex', flexDirection: 'column', gap: '1.5rem', alignSelf: 'flex-start' }}>
 
+        {/* Auth / Nickname Section */}
         <div>
-          <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>你的昵称</label>
-          <input type="text" className="input-field" placeholder="输入你的昵称"
-            value={playerName} onChange={(e) => setPlayerName(e.target.value)} maxLength={15} />
+          {isRegistered ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600, fontSize: '0.85rem' }}>已登录</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Link to={`/profile/${playerName}`} style={{
+                    color: 'var(--accent-color)', fontWeight: 700, fontSize: '1.1rem', textDecoration: 'none'
+                  }}>{playerName}</Link>
+                  {userInfo && <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Rating: {userInfo.rating}</span>}
+                </div>
+              </div>
+              <button className="btn btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem' }} onClick={onLogout}>登出</button>
+            </div>
+          ) : (
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>你的昵称 <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '0.8rem' }}>[未注册]</span></label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input type="text" className="input-field" placeholder="输入昵称（游客模式）"
+                  value={playerName} onChange={(e) => setPlayerName(e.target.value)} maxLength={15} />
+                <button className="btn" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                  onClick={() => { setShowAuthModal(true); setAuthError(''); }}>登录/注册</button>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.3rem' }}>游客模式不记录Rating和对局数据</p>
+            </div>
+          )}
         </div>
 
         <hr style={{ border: 'none', borderTop: '1px solid var(--glass-border)' }} />
@@ -363,6 +396,69 @@ export default function Lobby({ socket, playerName, setPlayerName }) {
         <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>内部测试群：1080382240</span>
       </div>
 
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }} onClick={() => setShowAuthModal(false)}>
+          <div className="glass-panel animate-fade-in" style={{ maxWidth: '380px', width: '90%' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ textAlign: 'center', marginBottom: '1.5rem', color: 'var(--text-primary)' }}>
+              {authMode === 'login' ? '登录' : '注册'}
+            </h3>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <input type="text" className="input-field" placeholder="用户名"
+                value={authUsername} onChange={e => setAuthUsername(e.target.value)} maxLength={20}
+                autoFocus />
+              <input type="password" className="input-field" placeholder="密码"
+                value={authPassword} onChange={e => setAuthPassword(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAuth(); }} />
+
+              {authError && <p style={{ color: '#ef4444', fontSize: '0.85rem', textAlign: 'center' }}>{authError}</p>}
+
+              <button className="btn" style={{ width: '100%' }}
+                onClick={handleAuth} disabled={authLoading}>
+                {authLoading ? '请稍候...' : (authMode === 'login' ? '登录' : '注册')}
+              </button>
+
+              <p style={{ textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                {authMode === 'login' ? (
+                  <>没有账号？<span style={{ color: 'var(--accent-color)', cursor: 'pointer' }}
+                    onClick={() => { setAuthMode('register'); setAuthError(''); }}>立即注册</span></>
+                ) : (
+                  <>已有账号？<span style={{ color: 'var(--accent-color)', cursor: 'pointer' }}
+                    onClick={() => { setAuthMode('login'); setAuthError(''); }}>去登录</span></>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
+
+  function handleAuth() {
+    if (!authUsername.trim() || !authPassword.trim()) {
+      setAuthError('请填写用户名和密码');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError('');
+    const event = authMode === 'login' ? 'login' : 'register';
+    socket.emit(event, { username: authUsername.trim(), password: authPassword }, (result) => {
+      setAuthLoading(false);
+      if (result.error) {
+        setAuthError(result.error);
+      } else if (result.success) {
+        onLogin(result.user);
+        setShowAuthModal(false);
+        setAuthUsername('');
+        setAuthPassword('');
+      }
+    });
+  }
 }

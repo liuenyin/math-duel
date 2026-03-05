@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Lobby from './pages/Lobby';
 import Room from './pages/Room';
+import Profile from './pages/Profile';
 import './index.css';
 
 // Connect to backend (using same host, different port for local dev)
@@ -11,8 +12,21 @@ const socket = io(socketUrl);
 
 function App() {
   const [playerName, setPlayerName] = useState('');
+  const [isRegistered, setIsRegistered] = useState(false);
+  const [userInfo, setUserInfo] = useState(null); // { username, rating, ... }
 
+  // Restore login state from localStorage
   useEffect(() => {
+    const saved = localStorage.getItem('mathDuelUser');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setPlayerName(parsed.username);
+        setIsRegistered(true);
+        setUserInfo(parsed);
+      } catch (e) { /* ignore */ }
+    }
+
     socket.on('connect', () => {
       console.log('Connected to server:', socket.id);
     });
@@ -21,6 +35,20 @@ function App() {
       socket.off('connect');
     };
   }, []);
+
+  const handleLogin = (user) => {
+    setPlayerName(user.username);
+    setIsRegistered(true);
+    setUserInfo(user);
+    localStorage.setItem('mathDuelUser', JSON.stringify(user));
+  };
+
+  const handleLogout = () => {
+    setPlayerName('');
+    setIsRegistered(false);
+    setUserInfo(null);
+    localStorage.removeItem('mathDuelUser');
+  };
 
   return (
     <Router>
@@ -34,11 +62,25 @@ function App() {
           <Routes>
             <Route
               path="/"
-              element={<Lobby socket={socket} playerName={playerName} setPlayerName={setPlayerName} />}
+              element={
+                <Lobby
+                  socket={socket}
+                  playerName={playerName}
+                  setPlayerName={setPlayerName}
+                  isRegistered={isRegistered}
+                  userInfo={userInfo}
+                  onLogin={handleLogin}
+                  onLogout={handleLogout}
+                />
+              }
             />
             <Route
               path="/room/:id"
-              element={<Room socket={socket} playerName={playerName} setPlayerName={setPlayerName} />}
+              element={<Room socket={socket} playerName={playerName} setPlayerName={setPlayerName} isRegistered={isRegistered} />}
+            />
+            <Route
+              path="/profile/:username"
+              element={<Profile socket={socket} />}
             />
           </Routes>
         </main>

@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import { judgeAnswerSteps } from './ai.js';
 import { problemPool } from './problemPool.js';
+import { registerUser, loginUser, getProfile, recordMatchResult, saveRoom, loadAllRooms, deleteRoom, saveRoomImmediate, getRecentMatches } from './db.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -15,7 +16,7 @@ app.get('/', (req, res) => res.send('Math Duel API running ✅'));
 const server = createServer(app);
 const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
-const rooms = {};
+let rooms = {};
 const globalChat = []; // { senderName, message, timestamp }
 
 const getActiveRoomsList = () => {
@@ -64,7 +65,35 @@ const handleSurrender = (roomId, surrenderTeam) => {
   room.status = 'ended';
   io.to(roomId).emit('matchEnded', { winner, room, surrenderTeam });
   broadcastActiveRooms();
+  recordMatchAndSave(roomId, winner, true);
 };
+
+// Helper: record match result to database and clean up room
+async function recordMatchAndSave(roomId, winnerTeam, isSurrender) {
+  const room = rooms[roomId];
+  if (!room) return;
+  const teamAPlayers = room.players.filter(p => p.team === 'A').map(p => ({ name: p.name, isRegistered: !!p.isRegistered }));
+  const teamBPlayers = room.players.filter(p => p.team === 'B').map(p => ({ name: p.name, isRegistered: !!p.isRegistered }));
+  // Only record if at least one registered player exists
+  const hasRegistered = [...teamAPlayers, ...teamBPlayers].some(p => p.isRegistered);
+  if (hasRegistered) {
+    try {
+      const ratingChanges = await recordMatchResult(
+        roomId, winnerTeam, isSurrender,
+        teamAPlayers, teamBPlayers,
+        room.teamScores.A, room.teamScores.B,
+        room.config?.dataset
+      );
+      // Emit rating changes to room so UI can show them
+      if (ratingChanges) {
+        io.to(roomId).emit('ratingChanges', ratingChanges);
+      }
+    } catch (e) {
+      console.error('[DB] recordMatchAndSave error:', e.message);
+    }
+  }
+  await saveRoomImmediate(roomId, room);
+}
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
@@ -73,6 +102,27 @@ io.on('connection', (socket) => {
   socket.on('joinLobby', () => {
     socket.emit('activeRoomsUpdate', getActiveRoomsList());
     socket.emit('globalChatHistory', globalChat);
+  });
+
+  // ===== AUTH =====
+  socket.on('register', async ({ username, password }, callback) => {
+    const result = await registerUser(username, password);
+    if (callback) callback(result);
+  });
+
+  socket.on('login', async ({ username, password }, callback) => {
+    const result = await loginUser(username, password);
+    if (callback) callback(result);
+  });
+
+  socket.on('getProfile', async ({ username }, callback) => {
+    const profile = await getProfile(username);
+    if (callback) callback(profile);
+  });
+
+  socket.on('getRecentMatches', async (data, callback) => {
+    const matches = await getRecentMatches(15);
+    if (callback) callback(matches);
   });
 
   socket.on('sendGlobalChat', ({ playerName, message }) => {
@@ -132,7 +182,8 @@ io.on('connection', (socket) => {
         const teamA = getTeamCount(rooms[roomId], 'A');
         const teamB = getTeamCount(rooms[roomId], 'B');
         const assignTeam = teamA <= teamB ? 'A' : 'B';
-        player = { id: socket.id, name: playerName, team: assignTeam, score: 0, ready: false, connected: true };
+        const isRegistered = !!config?.isRegistered;
+        player = { id: socket.id, name: playerName, team: assignTeam, score: 0, ready: false, connected: true, isRegistered };
         rooms[roomId].players.push(player);
       }
     } else {
@@ -445,6 +496,9 @@ io.on('connection', (socket) => {
       if (winner) {
         room.status = 'ended';
         io.to(roomId).emit('matchEnded', { winner, room });
+        recordMatchAndSave(roomId, winner, false);
+      } else {
+        saveRoom(roomId, room);
       }
     } else {
       socket.emit('answerResult', {
@@ -550,6 +604,19 @@ async function startGame(roomId) {
 }
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+
+// Load rooms from Supabase on startup
+async function boot() {
+  try {
+    const loaded = await loadAllRooms();
+    rooms = { ...rooms, ...loaded };
+    console.log(`[Boot] Restored ${Object.keys(loaded).length} rooms from database.`);
+  } catch (e) {
+    console.error('[Boot] Failed to load rooms:', e.message);
+  }
+  server.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+}
+
+boot();
