@@ -19,7 +19,7 @@ const rooms = {};
 const globalChat = []; // { senderName, message, timestamp }
 
 const getActiveRoomsList = () => {
-  return Object.keys(rooms).map(id => {
+  const list = Object.keys(rooms).map(id => {
     const r = rooms[id];
     return {
       id,
@@ -146,7 +146,11 @@ io.on('connection', (socket) => {
 
     io.to(roomId).emit('roomUpdate', rooms[roomId]);
     if (rooms[roomId].status === 'playing' && rooms[roomId].problems.length > 0) {
-      socket.emit('paperGenerated', { paper: rooms[roomId].problems, total: rooms[roomId].config.numQuestions });
+      // Mask problems to avoid leaking answers/solutions to clients
+      const maskedPaper = rooms[roomId].problems.map(p => ({
+        problem: p.problem, tags: p.tags, difficulty: p.difficulty, source: p.source
+      }));
+      socket.emit('paperGenerated', { paper: maskedPaper, total: rooms[roomId].config.numQuestions });
     }
 
     if (callback) callback({ success: true, room: rooms[roomId] });
@@ -203,7 +207,13 @@ io.on('connection', (socket) => {
         else if (teamBActive === 0) handleSurrender(roomId, 'B');
         else io.to(roomId).emit('roomUpdate', rooms[roomId]);
       } else {
-        io.to(roomId).emit('roomUpdate', rooms[roomId]);
+        // ended status: remove player and clean up if empty
+        rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== socket.id);
+        if (rooms[roomId].players.length === 0) {
+          delete rooms[roomId];
+        } else {
+          io.to(roomId).emit('roomUpdate', rooms[roomId]);
+        }
       }
       broadcastActiveRooms();
     }
@@ -225,23 +235,6 @@ io.on('connection', (socket) => {
     });
 
     handleSurrender(roomId, player.team);
-  });
-
-  socket.on('voteSkip', ({ roomId }) => {
-    const room = rooms[roomId];
-    if (!room || room.status !== 'playing') return;
-    const player = room.players.find(p => p.id === socket.id);
-    if (!player) return;
-
-    room.skipVotes[player.team] = true;
-    io.to(roomId).emit('roomUpdate', room);
-
-    if (room.skipVotes.A && room.skipVotes.B) {
-      // Both teams vote skip — regenerate entire paper
-      room.skipVotes = { A: false, B: false };
-      io.to(roomId).emit('roomUpdate', room);
-      startGame(roomId);
-    }
   });
 
   // ===== Chat =====
