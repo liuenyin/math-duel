@@ -180,7 +180,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendGlobalChat', ({ playerName, message }) => {
-    if (!playerName || !message.trim()) return;
+    if (!playerName || !message || !message.trim()) return;
     const msg = {
       senderName: playerName,
       message: message.substring(0, 500),
@@ -268,6 +268,13 @@ io.on('connection', (socket) => {
         problem: p.problem, tags: p.tags, difficulty: p.difficulty, source: p.source
       }));
       socket.emit('paperGenerated', { paper: maskedPaper, total: rooms[roomId].config.numQuestions });
+    }
+
+    // Send chat history to reconnecting/joining players
+    if (rooms[roomId].chatHistory && rooms[roomId].chatHistory.length > 0) {
+      for (const msg of rooms[roomId].chatHistory) {
+        socket.emit('chatMessage', msg);
+      }
     }
 
     if (callback) callback({ success: true, room: rooms[roomId] });
@@ -430,7 +437,7 @@ io.on('connection', (socket) => {
 
       try {
         const existingProblems = room.problems.filter((_, i) => i !== probIndex);
-        const existingIds = new Set(existingProblems.map(p => p.id));
+        const existingIds = new Set(existingProblems.map(p => p.id).filter(Boolean));
         const newProbs = problemPool.getRandomProblems(1, room.config, existingIds);
         const newProb = newProbs[0];
 
@@ -496,6 +503,9 @@ io.on('connection', (socket) => {
       io.to(roomId).emit('roomUpdate', room);
       io.to(roomId).emit('paperGenerated', { paper: [], total: room.config.numQuestions || 3 });
 
+      // Reset preGenerating flag before regenerating
+      room.preGenerating = false;
+      room.problems = [];
       // Regenerate the paper
       await preGenerateProblems(roomId);
     } else {
@@ -510,7 +520,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('submitAnswerSteps', async ({ roomId, probIndex, answer, steps }) => {
-    const room = rooms[roomId];
+    let room = rooms[roomId];
     if (!room || room.status !== 'playing') return;
     const player = room.players.find(p => p.id === socket.id);
     if (!player) return;
@@ -527,6 +537,14 @@ io.on('connection', (socket) => {
 
     socket.emit('judgingPending', { probIndex });
     const aiResult = await judgeAnswerSteps(probData.answer, probData.solution, answer, steps);
+
+    // Re-validate room after async AI call (room may have been deleted/ended during judging)
+    room = rooms[roomId];
+    if (!room || room.status !== 'playing') {
+      socket.emit('answerResult', { message: '判卷完成但对局已结束。' });
+      return;
+    }
+
     const scoreVal = (aiResult.scorePercent / 100) * maxPts;
 
     const currentTeamScoreOnProb = room.state.scoresTracker[team][probIndex] || 0;
@@ -588,7 +606,9 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
-    for (const roomId in rooms) {
+    // Use Object.keys snapshot to avoid issues with deleting entries during iteration
+    for (const roomId of Object.keys(rooms)) {
+      if (!rooms[roomId]) continue; // Room may have been deleted earlier in this loop
       const room = rooms[roomId];
       const playerIndex = room.players.findIndex(p => p.id === socket.id);
       if (playerIndex !== -1) {
@@ -651,6 +671,13 @@ async function preGenerateProblems(roomId) {
       answer: `${i + 2}`, solution: `$3^x = 3^{${i + 2}}$，$x=${i + 2}$。`,
       tags: ['对数与指数'], difficulty: 1000
     }));
+    // Emit fallback problems to clients if already playing
+    if (room.status === 'playing') {
+      room.problems.forEach((prob, i) => {
+        const masked = { problem: prob.problem, tags: prob.tags, difficulty: prob.difficulty };
+        io.to(roomId).emit('problemAdded', { index: i, problem: masked, total: numQ });
+      });
+    }
   }
 
   room.preGenerating = false;
