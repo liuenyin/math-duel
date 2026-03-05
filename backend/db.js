@@ -210,15 +210,15 @@ export async function recordMatchResult(roomId, winnerTeam, isSurrender, teamAPl
 let saveTimers = {};
 
 export async function saveRoom(roomId, roomData) {
-    // Debounce: max once per 3 seconds per room
-    if (saveTimers[roomId]) return;
+    // Debounce: save immediately, then block for 3 seconds
+    if (saveTimers[roomId]) return; // Currently in cooldown, skip
     saveTimers[roomId] = true;
     setTimeout(() => { delete saveTimers[roomId]; }, 3000);
 
     try {
         const { error } = await supabase.from('active_rooms').upsert({
             id: roomId,
-            data: roomData,
+            data: JSON.parse(JSON.stringify(roomData)), // Deep clone to avoid mutations
             updated_at: new Date().toISOString()
         });
         if (error) console.error('[DB] saveRoom error:', error.message);

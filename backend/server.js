@@ -230,9 +230,16 @@ io.on('connection', (socket) => {
     }
 
     let player = rooms[roomId].players.find(p => p.id === socket.id);
+    const isRegistered = !!config?.isRegistered;
     if (!player) {
-      player = rooms[roomId].players.find(p => p.name === playerName);
-      if (player && player.connected === false && rooms[roomId].status !== 'ended') {
+      player = rooms[roomId].players.find(p => p.name === playerName && p.connected === false);
+      if (player && rooms[roomId].status !== 'ended') {
+        // Safety: only allow reconnect if registration status matches
+        if (player.isRegistered && !isRegistered) {
+          // Unregistered user trying to take a registered user's spot — deny
+          if (callback) callback({ error: '该名称已被注册用户占用' });
+          return;
+        }
         player.id = socket.id; // Reclaim spot
         player.connected = true;
         // Cancel pending surrender timer if this team is now active again
@@ -241,7 +248,6 @@ io.on('connection', (socket) => {
         const teamA = getTeamCount(rooms[roomId], 'A');
         const teamB = getTeamCount(rooms[roomId], 'B');
         const assignTeam = teamA <= teamB ? 'A' : 'B';
-        const isRegistered = !!config?.isRegistered;
         player = { id: socket.id, name: playerName, team: assignTeam, score: 0, ready: false, connected: true, isRegistered };
         rooms[roomId].players.push(player);
       }

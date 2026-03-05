@@ -6,7 +6,8 @@ export default function Room({ socket, playerName, isRegistered }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const config = location.state?.config;
+  const configRef = useRef(location.state?.config);
+  const config = configRef.current;
 
   const [room, setRoom] = useState(null);
   const [paper, setPaper] = useState([]);
@@ -135,7 +136,7 @@ export default function Room({ socket, playerName, isRegistered }) {
       socket.off('globalError');
       socket.off('connect', doJoin);
     };
-  }, [id, playerName, navigate, socket, config]);
+  }, [id, playerName, navigate, socket]);
 
   // Render KaTeX with auto-render
   useEffect(() => {
@@ -256,7 +257,7 @@ export default function Room({ socket, playerName, isRegistered }) {
   };
 
   const filteredMessages = chatMessages.filter(m =>
-    chatTab === 'all' ? m.chatType === 'all' : (m.chatType === 'team' && m.team === myTeam)
+    m.team === 'system' || (chatTab === 'all' ? m.chatType === 'all' : (m.chatType === 'team' && m.team === myTeam))
   );
 
   const teamAColor = '#10b981';
