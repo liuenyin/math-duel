@@ -18,6 +18,7 @@ const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } 
 
 let rooms = {};
 const globalChat = []; // { senderName, message, timestamp }
+const surrenderTimers = {}; // { roomId: setTimeout handle }
 
 const getActiveRoomsList = () => {
   const list = Object.keys(rooms).map(id => {
@@ -93,6 +94,54 @@ async function recordMatchAndSave(roomId, winnerTeam, isSurrender) {
     }
   }
   await saveRoomImmediate(roomId, room);
+}
+
+// Schedule a surrender with 60-second grace period for reconnection
+function scheduleSurrender(roomId, team) {
+  // Don't schedule if there's already a pending timer
+  if (surrenderTimers[roomId]) return;
+
+  const room = rooms[roomId];
+  if (!room || room.status !== 'playing') return;
+
+  const msg = {
+    senderId: 'system', senderName: '系统', team: 'system',
+    message: `${team}队所有成员已断线，60秒内无人重连将自动判负...`,
+    chatType: 'all', timestamp: Date.now()
+  };
+  room.chatHistory.push(msg);
+  if (room.chatHistory.length > 200) room.chatHistory.shift();
+  io.to(roomId).emit('chatMessage', msg);
+  io.to(roomId).emit('roomUpdate', room);
+
+  surrenderTimers[roomId] = setTimeout(() => {
+    delete surrenderTimers[roomId];
+    // Re-check if the team is still empty
+    const r = rooms[roomId];
+    if (!r || r.status !== 'playing') return;
+    const active = r.players.filter(p => p.team === team && p.connected !== false).length;
+    if (active === 0) {
+      handleSurrender(roomId, team);
+    }
+  }, 60000); // 60 seconds
+}
+
+function cancelSurrenderTimer(roomId) {
+  if (surrenderTimers[roomId]) {
+    clearTimeout(surrenderTimers[roomId]);
+    delete surrenderTimers[roomId];
+    const room = rooms[roomId];
+    if (room) {
+      const msg = {
+        senderId: 'system', senderName: '系统', team: 'system',
+        message: '玩家已重连，比赛继续！',
+        chatType: 'all', timestamp: Date.now()
+      };
+      room.chatHistory.push(msg);
+      if (room.chatHistory.length > 200) room.chatHistory.shift();
+      io.to(roomId).emit('chatMessage', msg);
+    }
+  }
 }
 
 io.on('connection', (socket) => {
@@ -178,6 +227,8 @@ io.on('connection', (socket) => {
       if (player && player.connected === false && rooms[roomId].status !== 'ended') {
         player.id = socket.id; // Reclaim spot
         player.connected = true;
+        // Cancel pending surrender timer if this team is now active again
+        cancelSurrenderTimer(roomId);
       } else if (rooms[roomId].status === 'waiting') {
         const teamA = getTeamCount(rooms[roomId], 'A');
         const teamB = getTeamCount(rooms[roomId], 'B');
@@ -189,6 +240,7 @@ io.on('connection', (socket) => {
     } else {
       player.name = playerName;
       player.connected = true;
+      cancelSurrenderTimer(roomId);
     }
 
     // Store roomId on socket for chat
@@ -254,8 +306,8 @@ io.on('connection', (socket) => {
 
         const teamAActive = rooms[roomId].players.filter(p => p.team === 'A' && p.connected !== false).length;
         const teamBActive = rooms[roomId].players.filter(p => p.team === 'B' && p.connected !== false).length;
-        if (teamAActive === 0) handleSurrender(roomId, 'A');
-        else if (teamBActive === 0) handleSurrender(roomId, 'B');
+        if (teamAActive === 0) scheduleSurrender(roomId, 'A');
+        else if (teamBActive === 0) scheduleSurrender(roomId, 'B');
         else io.to(roomId).emit('roomUpdate', rooms[roomId]);
       } else {
         // ended status: remove player and clean up if empty
@@ -425,6 +477,7 @@ io.on('connection', (socket) => {
       room.state.locks = {};
       room.teamScores = { A: 0, B: 0 };
       room.players.forEach(p => p.score = 0);
+      io.to(roomId).emit('roomUpdate', room);
       io.to(roomId).emit('paperGenerated', { paper: [], total: room.config.numQuestions || 3 });
 
       // Regenerate the paper
@@ -535,8 +588,8 @@ io.on('connection', (socket) => {
           room.players[playerIndex].connected = false;
           const teamAActive = room.players.filter(p => p.team === 'A' && p.connected !== false).length;
           const teamBActive = room.players.filter(p => p.team === 'B' && p.connected !== false).length;
-          if (teamAActive === 0) handleSurrender(roomId, 'A');
-          else if (teamBActive === 0) handleSurrender(roomId, 'B');
+          if (teamAActive === 0) scheduleSurrender(roomId, 'A');
+          else if (teamBActive === 0) scheduleSurrender(roomId, 'B');
           else io.to(roomId).emit('roomUpdate', room);
         } else {
           io.to(roomId).emit('roomUpdate', room);
