@@ -266,7 +266,7 @@ export async function saveRoomImmediate(roomId, roomData) {
     try {
         await supabase.from('active_rooms').upsert({
             id: roomId,
-            data: roomData,
+            data: JSON.parse(JSON.stringify(roomData)), // Deep clone to avoid mutations
             updated_at: new Date().toISOString()
         });
     } catch (e) {

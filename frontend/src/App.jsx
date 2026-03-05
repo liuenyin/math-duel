@@ -76,7 +76,7 @@ function App() {
             />
             <Route
               path="/room/:id"
-              element={<Room socket={socket} playerName={playerName} setPlayerName={setPlayerName} isRegistered={isRegistered} />}
+              element={<Room socket={socket} playerName={playerName} isRegistered={isRegistered} />}
             />
             <Route
               path="/profile/:username"

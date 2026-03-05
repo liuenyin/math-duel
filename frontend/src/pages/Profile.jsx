@@ -206,7 +206,7 @@ export default function Profile({ socket }) {
                                                     <td style={{ padding: '0.5rem 0.3rem', color: 'var(--text-secondary)' }}>#{m.id}</td>
                                                     <td style={{ padding: '0.5rem 0.3rem' }}>
                                                         <span style={{ color: isWin ? '#10b981' : '#ef4444', fontWeight: 600 }}>
-                                                            {isWin ? '胜' : (m.is_surrender ? '投降' : '负')}
+                                                            {isWin ? '胜' : (m.is_surrender && !isWin ? '投降' : '负')}
                                                         </span>
                                                         {' '}
                                                         <span style={{ color: 'var(--text-primary)' }}>
