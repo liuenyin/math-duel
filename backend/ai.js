@@ -163,7 +163,7 @@ export async function judgeAnswerSteps(expectedAnswer, solution, userAnswer, use
         };
     } catch (e) {
         console.error("[AI] Error judging:", e.message);
-        const correct = expectedAnswer.toString().trim() === userAnswer.toString().trim();
+        const correct = String(expectedAnswer || "").trim() === String(userAnswer || "").trim();
         return {
             scorePercent: correct ? 100 : 0,
             feedback: correct ? "回答正确！" : "回答错误。"

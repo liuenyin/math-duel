@@ -7,10 +7,13 @@ export default function Profile({ socket }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        let isMounted = true;
         socket.emit('getProfile', { username }, (data) => {
+            if (!isMounted) return;
             setProfile(data);
             setLoading(false);
         });
+        return () => { isMounted = false; };
     }, [username, socket]);
 
     if (loading) {
