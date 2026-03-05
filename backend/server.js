@@ -62,6 +62,11 @@ const checkWinCondition = (roomId) => {
 const handleSurrender = (roomId, surrenderTeam) => {
   const room = rooms[roomId];
   if (!room || room.status !== 'playing') return;
+  // Cancel any pending surrender timer to avoid double-fire
+  if (surrenderTimers[roomId]) {
+    clearTimeout(surrenderTimers[roomId]);
+    delete surrenderTimers[roomId];
+  }
   const winner = surrenderTeam === 'A' ? 'B' : 'A';
   room.status = 'ended';
   io.to(roomId).emit('matchEnded', { winner, room, surrenderTeam });
@@ -193,7 +198,10 @@ io.on('connection', (socket) => {
       socket.leave(oldRoomId);
       if (rooms[oldRoomId]) {
         rooms[oldRoomId].players = rooms[oldRoomId].players.filter(p => p.id !== socket.id);
-        if (rooms[oldRoomId].players.length === 0) delete rooms[oldRoomId];
+        if (rooms[oldRoomId].players.length === 0) {
+          delete rooms[oldRoomId];
+          deleteRoom(oldRoomId);
+        }
         else io.to(oldRoomId).emit('roomUpdate', rooms[oldRoomId]);
       }
     }
@@ -296,6 +304,7 @@ io.on('connection', (socket) => {
         rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== socket.id);
         if (rooms[roomId].players.length === 0) {
           delete rooms[roomId];
+          deleteRoom(roomId);
         } else {
           rooms[roomId].players.forEach(p => p.ready = false);
           io.to(roomId).emit('roomUpdate', rooms[roomId]);
@@ -314,6 +323,7 @@ io.on('connection', (socket) => {
         rooms[roomId].players = rooms[roomId].players.filter(p => p.id !== socket.id);
         if (rooms[roomId].players.length === 0) {
           delete rooms[roomId];
+          deleteRoom(roomId);
         } else {
           io.to(roomId).emit('roomUpdate', rooms[roomId]);
         }
@@ -580,6 +590,7 @@ io.on('connection', (socket) => {
           room.players.splice(playerIndex, 1);
           if (room.players.length === 0) {
             delete rooms[roomId];
+            deleteRoom(roomId);
           } else {
             room.players.forEach(p => p.ready = false);
             io.to(roomId).emit('roomUpdate', room);
@@ -592,7 +603,14 @@ io.on('connection', (socket) => {
           else if (teamBActive === 0) scheduleSurrender(roomId, 'B');
           else io.to(roomId).emit('roomUpdate', room);
         } else {
-          io.to(roomId).emit('roomUpdate', room);
+          // ended: remove player and clean up
+          room.players.splice(playerIndex, 1);
+          if (room.players.length === 0) {
+            delete rooms[roomId];
+            deleteRoom(roomId);
+          } else {
+            io.to(roomId).emit('roomUpdate', room);
+          }
         }
         broadcastActiveRooms();
       }

@@ -181,13 +181,7 @@ export async function recordMatchResult(roomId, winnerTeam, isSurrender, teamAPl
             (registeredB.some(p => p.name === name) && winnerTeam === 'B');
         const isSurrenderLoss = isSurrender && !isWinner;
 
-        await supabase.from('users').update({
-            rating: rc.after,
-            wins: isWinner ? supabase.rpc ? undefined : undefined : undefined, // handled below
-            games_played: undefined
-        }).eq('username', name);
-
-        // Use RPC-like increment via raw update
+        // Read current stats, then do a single atomic update
         const { data: currentUser } = await supabase.from('users').select('wins, losses, surrenders, games_played').eq('username', name).single();
         if (currentUser) {
             await supabase.from('users').update({
