@@ -54,8 +54,8 @@ const checkWinCondition = (roomId) => {
   const room = rooms[roomId];
   const total = totalPaperScore(room);
   const winReq = total / 2;
-  if (room.teamScores.A > winReq) return 'A';
-  if (room.teamScores.B > winReq) return 'B';
+  if (room.teamScores.A >= winReq) return 'A';
+  if (room.teamScores.B >= winReq) return 'B';
   return null;
 };
 
@@ -542,6 +542,12 @@ io.on('connection', (socket) => {
     room = rooms[roomId];
     if (!room || room.status !== 'playing') {
       socket.emit('answerResult', { message: '判卷完成但对局已结束。' });
+      return;
+    }
+
+    // Re-check lock after async AI call (the other team might have locked it while we were judging)
+    if (room.state.locks[probIndex] && room.state.locks[probIndex] !== team) {
+      socket.emit('answerResult', { message: '判卷期间本题已被对方队伍攻破锁定！得分无效。' });
       return;
     }
 
