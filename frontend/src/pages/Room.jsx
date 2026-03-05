@@ -112,8 +112,10 @@ export default function Room({ socket, playerName, isRegistered }) {
 
     socket.on('globalError', (data) => alert(data.message));
 
+    let isMounted = true;
     const doJoin = () => {
       socket.emit('joinRoom', { roomId: id, playerName, config: { ...config, isRegistered } }, (res) => {
+        if (!isMounted) return;
         if (res && res.error) { alert(res.error); navigate('/'); }
       });
     };
@@ -122,6 +124,7 @@ export default function Room({ socket, playerName, isRegistered }) {
     else { socket.once('connect', doJoin); }
 
     return () => {
+      isMounted = false;
       // Notify server immediately when leaving the room page
       socket.emit('leaveRoom', { roomId: id });
       socket.off('roomUpdate');

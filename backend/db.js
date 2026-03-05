@@ -236,12 +236,20 @@ export async function loadAllRooms() {
         }
         const rooms = {};
         for (const row of (data || [])) {
-            if (row.data && row.data.status !== 'ended') {
+            const ageHours = (Date.now() - new Date(row.updated_at).getTime()) / (1000 * 60 * 60);
+
+            if (ageHours > 24) {
+                // Delete stale rooms older than 24 hours (server probably crashed/slept)
+                await deleteRoom(row.id);
+            } else if (row.data && row.data.status !== 'ended') {
                 // Mark all players as disconnected (they'll reconnect)
                 if (row.data.players) {
                     row.data.players.forEach(p => { p.connected = false; });
                 }
                 rooms[row.id] = row.data;
+            } else {
+                // Also clean up explicitly ended rooms that somehow stuck around
+                await deleteRoom(row.id);
             }
         }
         console.log(`[DB] Loaded ${Object.keys(rooms).length} active rooms from database.`);
