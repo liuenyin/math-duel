@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // ===== DeepSeek API Configuration =====
-const DEEPSEEK_API_KEY = "sk-3d68364cb8fb4e7ba5962940796343a2";
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "sk-3d68364cb8fb4e7ba5962940796343a2";
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 const GEN_MODEL = "deepseek-chat";       // Fast model for problem generation
 const JUDGE_MODEL = "deepseek-reasoner"; // Reasoning model for accurate judging
